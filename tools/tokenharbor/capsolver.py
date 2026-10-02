@@ -1,74 +1,106 @@
 """
 Capsolver Turnstile integration for TokenHarbor.
+
+All values (API key, sitekey, page URLs, timeouts) come from config.toml.
 """
 
+from __future__ import annotations
+
 import time
-import requests
-from pathlib import Path
 from typing import Optional
 
-# TokenHarbor signup page Turnstile sitekey
-TURNSTILE_SITEKEY = "0x4AAAAAADBuC8Knz1EJZx9-"
-TURNSTILE_URL = "https://tokenharbor.ai/login?mode=signup"
+import requests
+
+from tools.tokenharbor import config
+
+CREATE_TASK_URL = "https://api.capsolver.com/createTask"
+GET_RESULT_URL = "https://api.capsolver.com/getTaskResult"
 
 
-def _load_capsolver_key() -> str:
-    """Load Capsolver API key from file."""
-    key_file = Path(__file__).resolve().parent.parent / ".capsolver_key"
-    if not key_file.exists():
-        raise FileNotFoundError(
-            f"Capsolver key file not found: {key_file}\n"
-            "Create it with your Capsolver API key."
-        )
-    return key_file.read_text().strip()
+def _resolve_api_key(api_key: Optional[str] = None) -> Optional[str]:
+    return api_key or config.CAPSOLVER_API_KEY
 
 
 def solve_turnstile(
-    timeout: float = 90,
-    poll_interval: float = 3,
+    page_url: Optional[str] = None,
+    sitekey: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[float] = None,
+    poll_interval: Optional[float] = None,
+    proxy: Optional[str] = None,
+    session: Optional[requests.Session] = None,
 ) -> Optional[str]:
     """
-    Solve a Turnstile captcha via Capsolver API.
+    Solve a Turnstile captcha via Capsolver.
 
-    Returns the token string, or None on timeout/failure.
+    Returns the token string, or None when disabled / on timeout / failure.
     """
-    client_key = _load_capsolver_key()
+    if not config.CAPSOLVER_ENABLED:
+        return None
 
-    # Create task
-    r = requests.post(
-        "https://api.capsolver.com/createTask",
-        json={
-            "clientKey": client_key,
-            "task": {
-                "type": "AntiTurnstileTaskProxyLess",
-                "websiteURL": TURNSTILE_URL,
-                "websiteKey": TURNSTILE_SITEKEY,
-            },
-        },
-        timeout=15,
+    client_key = _resolve_api_key(api_key)
+    if not client_key:
+        print("  Capsolver: no API key configured")
+        return None
+
+    page_url = page_url or config.SIGNUP_URL
+    sitekey = sitekey or config.TURNSTILE_SITEKEY
+    timeout = config.CAPSOLVER_TIMEOUT if timeout is None else timeout
+    poll_interval = (
+        config.CAPSOLVER_POLL_INTERVAL if poll_interval is None else poll_interval
     )
-    data = r.json()
+    http = session or requests
+
+    task: dict = {
+        "type": "AntiTurnstileTaskProxyLess",
+        "websiteURL": page_url,
+        "websiteKey": sitekey,
+    }
+    if proxy:
+        # Use a proxy-aware task type when a proxy is supplied.
+        task = {
+            "type": "AntiTurnstileTask",
+            "websiteURL": page_url,
+            "websiteKey": sitekey,
+            "proxy": proxy,
+        }
+
+    try:
+        r = http.post(
+            CREATE_TASK_URL,
+            json={"clientKey": client_key, "task": task},
+            timeout=15,
+        )
+        data = r.json()
+    except (requests.RequestException, ValueError) as e:
+        print(f"  Capsolver createTask failed: {e}")
+        return None
+
     if data.get("errorId") != 0:
         print(f"  Capsolver createTask error: {data.get('errorDescription', data)}")
         return None
 
-    task_id = data["taskId"]
+    task_id = data.get("taskId")
+    if not task_id:
+        print("  Capsolver: no taskId returned")
+        return None
 
-    # Poll for result
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(poll_interval)
-        r = requests.post(
-            "https://api.capsolver.com/getTaskResult",
-            json={
-                "clientKey": client_key,
-                "taskId": task_id,
-            },
-            timeout=10,
-        )
-        data = r.json()
+        try:
+            r = http.post(
+                GET_RESULT_URL,
+                json={"clientKey": client_key, "taskId": task_id},
+                timeout=10,
+            )
+            data = r.json()
+        except (requests.RequestException, ValueError) as e:
+            print(f"  Capsolver getTaskResult failed: {e}")
+            return None
+
         if data.get("status") == "ready":
-            return data["solution"]["token"]
+            return data.get("solution", {}).get("token")
         if data.get("errorId") != 0:
             print(f"  Capsolver getTaskResult error: {data.get('errorDescription', data)}")
             return None

@@ -14,13 +14,13 @@
 ## ✨ Features
 
 - 🔐 **Auto signup** — Next.js Server Action + Capsolver Turnstile bypass
-- 📧 **Disposable email** — Tempik integration, random domain rotation
+- 📧 **Local temp mail** — Polls your self-hosted temp-mail API for the 6-digit verification code
 - 🔑 **API key generation** — Auto create + extract plaintext key
 - 🆓 **Free model activation** — One-click enable all free models
 - 🚀 **Batch mode** — Create N accounts in one go
-- 🛡️ **Proxy auto-check** — Scan 100 proxies before use, filter alive only
+- 🛡️ **Proxy auto-check** — Verify proxies before use, filter alive only
 - 🎨 **Rich TUI** — Interactive terminal UI with panels, tables, progress bars
-- ⚙️ **Config-driven** — Zero hardcode, everything in `config.toml`
+- ⚙️ **Single config file** — Everything (email domains, proxy, Capsolver) in `config.toml`
 
 ## 📦 Requirements
 
@@ -33,6 +33,8 @@ pip install rich requests
 ```bash
 cd /path/to/harbor
 source .venv/bin/activate
+cp tools/tokenharbor/example.config.toml tools/tokenharbor/config.toml
+# edit tools/tokenharbor/config.toml (ALLOWED_EMAIL, proxy, capsolver key)
 
 # Interactive menu (recommended)
 python3 -m tools.tokenharbor.cli
@@ -58,19 +60,43 @@ python3 -m tools.tokenharbor.cli test-key thk_live_xxxxxxxx
 
 ## 🔧 Configuration
 
-All settings in `tools/tokenharbor/config.toml`:
+**Everything lives in one file:** `tools/tokenharbor/config.toml`. No separate
+secret files, no proxy `.txt` files. The file is gitignored — never commit it.
 
 ```toml
+# Domains allowed to receive mail on your local temp-mail server.
+# Comma-separated (multi value).
+ALLOWED_EMAIL = "mpruy.my.id,example.com"
+
 [tokenharbor]
 base_url = "https://tokenharbor.ai"
 turnstile_sitekey = "0x4AAAAAADBuC8Knz1EJZx9-"
 
-[tempik]
-base_url = "https://your-tempik-instance.com"    # URL instance Tempik kamu (self-host recommended)
+[tempmail]
+base_url = "http://localhost:8000"   # your local temp-mail API
+timeout = 120
+poll_interval = 3
+limit = 50
+
+[capsolver]
+enabled = true
+api_key = "CAP-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+timeout = 90
+poll_interval = 3
+
+[proxy]
+enabled = true
+# DataImpulse direct (rotating gateway)
+protocol = "http"
+host = "gw.dataimpulse.com"
+port = 823
+username = "your-dataimpulse-user"
+password = "your-dataimpulse-pass"
+check_timeout = 8
+# Optional extra proxies (full URLs)
+# list = ["http://user:pass@host:port"]
 
 [files]
-capsolver_key = "tools/.capsolver_key"
-proxy_list = "tools/proxyscrape_premium_http_proxies.txt"
 account_output = "account.json"
 
 [models]
@@ -81,64 +107,52 @@ free = [
 ]
 ```
 
-### 1. Capsolver API Key
+### 1. ALLOWED_EMAIL
 
-Simpan di `tools/.capsolver_key`:
+A comma-separated list of domains that your local temp-mail server accepts.
+The CLI generates random local parts and rotates across these domains.
+Both `"a.com, b.com"` and a TOML array `["a.com", "b.com"]` are supported.
+
+### 2. Capsolver
+
+Put your Capsolver API key directly in `[capsolver].api_key`.
+Get one at [capsolver.com](https://capsolver.com) — a few dollars covers
+hundreds of solves. Set `enabled = false` to skip the Turnstile step.
+
+### 3. Proxy (DataImpulse)
+
+Configure the DataImpulse rotating gateway credentials in `[proxy]`.
+The CLI builds `protocol://username:password@host:port` automatically and
+scans it before creating accounts — only alive proxies are used.
+
+Add more proxies (e.g. extra gateways) under `proxy.list`.
+
+### 4. Temp Mail (local API)
+
+The CLI talks to your local temp-mail server (see `temp-api/docs.md`):
 
 ```
-CAP-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GET /health                     -> {"status": "ok", ...}
+GET /inbox/{email}?limit=50     -> {"email", "count", "emails": [...]}
+GET /inbox/{email}/{uid}        -> single email detail
 ```
 
-Daftar di [capsolver.com](https://capsolver.com) — topup ~$3 cukup untuk ratusan solve.
-
-### 2. Premium Proxy
-
-Simpan di `tools/proxyscrape_premium_http_proxies.txt`:
-
-```
-user:pass@host:port
-user:pass@host:port
-...
-```
-
-Format proxyscrape premium (satu proxy per baris). Proxy di-scan otomatis — cuma yang alive yang dipake.
-
-### 3. Tempik (Disposable Email)
-
-CLI ini menggunakan [Tempik](https://github.com/hirotomasato/tempik) — disposable email API open-source.
-
-> ⚠️ **Default instance** (`your-tempik-instance.com`) adalah public shared instance.  
-> Untuk production / batch massal, **sangat disarankan self-host** Tempik sendiri.
-
-#### Self-host Tempik
-
-```bash
-git clone https://github.com/hirotomasato/tempik
-cd tempik
-```
-
-Lalu update `config.toml`:
-
-```toml
-[tempik]
-base_url = "https://tempik.your-domain.com"   # 👈 ganti ke instance kamu
-```
-
-Tempik akan auto-detect domain yang tersedia dari instance kamu — gak ada hardcode domain.
+Each email has `uid`, `from`, `to`, `date`, `body`, `seen`. No inbox creation
+is needed — just poll the inbox. Verification is read from the email body:
+a `verify-email?token=` link is preferred, with a 6-digit code fallback.
 
 ## 📁 File Structure
 
 ```
-tools/
-├── .capsolver_key                          # Capsolver API key (secret)
-├── proxyscrape_premium_http_proxies.txt     # Premium HTTP proxies
-└── tokenharbor/
-    ├── config.toml      # ⚙️ All configuration
-    ├── __init__.py
-    ├── client.py        # Core HTTP client (signup, login, API key, free models)
-    ├── cli.py           # Interactive CLI + Rich TUI
-    ├── capsolver.py     # Capsolver Turnstile solver
-    └── tempik.py        # Tempik disposable email client
+tools/tokenharbor/
+├── config.toml          # ⚙️ All config (gitignored, contains secrets)
+├── example.config.toml  # Template to copy
+├── __init__.py
+├── config.py            # Central config loader
+├── client.py            # Core HTTP client (signup, login, API key, free models)
+├── cli.py               # Interactive CLI + Rich TUI
+├── capsolver.py         # Capsolver Turnstile solver
+└── tempmail.py          # Local temp-mail client + email parsing
 ```
 
 ## 🔄 How It Works
@@ -146,8 +160,8 @@ tools/
 ```
 ┌──────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐    ┌───────────┐
 │  SIGNUP  │───▶│  EMAIL   │───▶│  VERIFY   │───▶│  LOGIN   │───▶│ API KEY   │
-│ Next.js  │    │ Tempik   │    │ Email     │    │ Cookie   │    │ POST      │
-│ Action   │    │ inbox    │    │ link      │    │ auth     │    │ /api/keys │
+│ Next.js  │    │ local    │    │ link/code │    │ Cookie   │    │ POST      │
+│ Action   │    │ inbox    │    │           │    │ auth     │    │ /api/keys │
 └──────────┘    └──────────┘    └───────────┘    └──────────┘    └───────────┘
                                                                       │
                                                                ┌──────▼───────┐
@@ -158,13 +172,13 @@ tools/
                                                                └──────────────┘
 ```
 
-1. **Signup** — Multipart form data ke Next.js Server Action, Turnstile token dari Capsolver
-2. **Email** — Tempik disposable inbox, polling verification link
-3. **Verify** — GET verification link dengan session cookies
+1. **Signup** — Multipart form data to the Next.js Server Action, Turnstile token from Capsolver
+2. **Email** — Poll the local temp-mail inbox for the verification message
+3. **Verify** — Extract the link (or 6-digit code) and hit `/verify-email?token=...`
 4. **Login** — Server Action signin, extract Supabase chunked cookies → access token
-5. **API Key** — `POST /api/keys` dengan cookie auth, ambil `plaintext` key
-6. **Free Models** — `POST /api/me/privacy` dengan cookie auth
-7. **Test** — `POST /v1/chat/completions` dengan API key Bearer auth
+5. **API Key** — `POST /api/keys` with cookie auth, take `plaintext` key
+6. **Free Models** — `POST /api/me/privacy` with cookie auth
+7. **Test** — `POST /v1/chat/completions` with API key Bearer auth
 
 ## 🆓 Free Models
 
@@ -174,7 +188,7 @@ tools/
 | `mimo-v2.5:free` | MiMo |
 | `qwen3.8-27b:free` | Qwen |
 
-Model list bisa diedit di `config.toml`.
+Model list can be edited in `config.toml`.
 
 ## 📝 CLI Reference
 
@@ -182,7 +196,7 @@ Model list bisa diedit di `config.toml`.
 # Interactive menu
 python3 -m tools.tokenharbor.cli
 
-# Full flow (auto email + password)
+# Full flow (random allowed email + password)
 python3 -m tools.tokenharbor.cli full-setup
 
 # Custom email
@@ -209,15 +223,15 @@ python3 -m tools.tokenharbor.cli check-proxies
 
 ## 💡 Tips
 
-- Akun otomatis disimpan ke `account.json` (append mode)
-- Email pakai random domain dari Tempik (auto-detected)
-- Proxy di-scan sebelum create — gak bakal pake proxy mati
-- Rate limit TokenHarbor di-bypass via rotasi proxy premium
-- Capsolver solve ~3-5 detik per Turnstile
-- Batch mode kasih delay 2 detik antar akun
+- Accounts are appended to `account.json`
+- Emails use random local parts over the domains in `ALLOWED_EMAIL`
+- Proxies are scanned before creating — dead proxies are skipped
+- TokenHarbor rate limits are bypassed by rotating the DataImpulse proxy
+- Capsolver solves a Turnstile in ~3-5 seconds
+- Batch mode waits 2 seconds between accounts
 
 ---
 
 <p align="center">
-  <sub>by <b>MASANTOID</b> · <a href="https://github.com/hirotomasato/tempik">Tempik</a> · <a href="https://tokenharbor.ai">TokenHarbor</a></sub>
+  <sub>by <b>MASANTOID</b> · <a href="https://tokenharbor.ai">TokenHarbor</a></sub>
 </p>

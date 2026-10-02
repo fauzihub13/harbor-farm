@@ -10,14 +10,10 @@ build/
 venv/
 
 # Sensitive — do NOT commit
-tools/.capsolver_key
-tools/proxyscrape_premium_http_proxies.txt
-tools/proxies.txt
-tools/tess.txt
 account.json
 *.account.json
 
-# Config with real credentials
+# Config with real credentials (all settings live here)
 tools/tokenharbor/config.toml
 
 # IDE
@@ -26,3 +22,7 @@ tools/tokenharbor/config.toml
 *.swp
 *.swo
 *~
+
+.venv
+.capsolver_key
+.proxy_list.txt

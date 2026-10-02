@@ -14,12 +14,10 @@ from __future__ import annotations
 
 import json
 import random
-import re
 import secrets
 import string
 import sys
 import time
-import tomllib
 from pathlib import Path
 from typing import Optional
 
@@ -29,15 +27,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 TOOLS_DIR = PROJECT_ROOT / "tools"
 
 # ── config ──────────────────────────────────────────────────────────────────
-_CONFIG_PATH = Path(__file__).resolve().parent / "config.toml"
-with open(_CONFIG_PATH, "rb") as _f:
-    _cfg = tomllib.load(_f)
+from tools.tokenharbor import config
 
-_TH_BASE_URL = _cfg["tokenharbor"]["base_url"]
-_CAPSOLVER_KEY_FILE = PROJECT_ROOT / _cfg["files"]["capsolver_key"]
-_PROXY_FILE = PROJECT_ROOT / _cfg["files"]["proxy_list"]
-_ACCOUNT_FILE = _cfg["files"]["account_output"]
-_FREE_MODELS = _cfg["models"]["free"]
+_TH_BASE_URL = config.BASE_URL
+_ACCOUNT_FILE = PROJECT_ROOT / config.ACCOUNT_OUTPUT
+_FREE_MODELS = config.FREE_MODELS
 
 # ── rich ────────────────────────────────────────────────────────────────────
 from rich.console import Console
@@ -51,43 +45,36 @@ console = Console()
 
 # ── local imports ───────────────────────────────────────────────────────────
 from tools.tokenharbor.client import TokenHarborClient
-from tools.tokenharbor.tempik import TempikClient
+from tools.tokenharbor.tempmail import (
+    TempMailClient,
+    extract_verification_link,
+    extract_verification_code,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# cached domain list from Tempik
-_DOMAINS_CACHE: Optional[list[str]] = None
-
 
 def _load_capsolver_key() -> Optional[str]:
-    if _CAPSOLVER_KEY_FILE.exists():
-        return _CAPSOLVER_KEY_FILE.read_text().strip()
-    return None
-
-
-def _load_random_proxy() -> Optional[str]:
-    if _PROXY_FILE.exists():
-        lines = [l.strip() for l in _PROXY_FILE.read_text().strip().split("\n") if l.strip()]
-        if lines:
-            raw = random.choice(lines)
-            creds = raw.split("\t")[-1]
-            return "http://" + creds
-    return None
+    return config.CAPSOLVER_API_KEY
 
 
 def _load_all_proxies() -> list[str]:
-    """Load all proxies from file."""
-    if _PROXY_FILE.exists():
-        lines = [l.strip() for l in _PROXY_FILE.read_text().strip().split("\n") if l.strip()]
-        return ["http://" + l.split("\t")[-1] for l in lines]
-    return []
+    """Load all proxies from config.toml (DataImpulse gateway + optional list)."""
+    return config.load_proxies()
 
 
-def _check_proxy(proxy: str, timeout: float = 8) -> bool:
+def _load_random_proxy() -> Optional[str]:
+    proxies = _load_all_proxies()
+    return random.choice(proxies) if proxies else None
+
+
+def _check_proxy(proxy: str, timeout: Optional[float] = None) -> bool:
     """Test if a proxy is alive by hitting tokenharbor.ai."""
     import requests as _r
+
+    timeout = config.PROXY_CHECK_TIMEOUT if timeout is None else timeout
     try:
         resp = _r.get(
             f"{_TH_BASE_URL}/login",
@@ -99,7 +86,7 @@ def _check_proxy(proxy: str, timeout: float = 8) -> bool:
         return False
 
 
-def _check_all_proxies(proxies: Optional[list[str]] = None, timeout: float = 8) -> tuple[list[str], list[str]]:
+def _check_all_proxies(proxies: Optional[list[str]] = None, timeout: Optional[float] = None) -> tuple[list[str], list[str]]:
     """Check all proxies. Returns (alive, dead)."""
     if proxies is None:
         proxies = _load_all_proxies()
@@ -113,7 +100,7 @@ def _check_all_proxies(proxies: Optional[list[str]] = None, timeout: float = 8) 
 
 
 def _get_working_proxy(checked_alive: Optional[list[str]] = None) -> Optional[str]:
-    """Get a random working proxy. If checked_alive provided, use it; otherwise check one on the fly."""
+    """Get a random working proxy. If checked_alive provided, use it; otherwise load one."""
     if checked_alive:
         return random.choice(checked_alive)
     return _load_random_proxy()
@@ -123,7 +110,7 @@ def _pick_working_proxy_interactive() -> Optional[str]:
     """Interactive: check proxies and pick a working one. Returns proxy URL or None."""
     all_proxies = _load_all_proxies()
     if not all_proxies:
-        console.print("[yellow]No proxies found in proxy file[/yellow]")
+        console.print("[yellow]No proxies configured[/yellow]")
         return None
 
     console.print(f"[bold cyan]Checking {len(all_proxies)} proxies...[/bold cyan]")
@@ -142,24 +129,22 @@ def _gen_password(length: int = 20) -> str:
 
 
 def _get_domains() -> list[str]:
-    """Fetch available Tempik domains (cached). Falls back to exse7en.fr."""
-    global _DOMAINS_CACHE
-    if _DOMAINS_CACHE is None:
-        try:
-            tempik = TempikClient()
-            _DOMAINS_CACHE = tempik.get_domains()
-        except Exception:
-            _DOMAINS_CACHE = ["exse7en.fr"]
-    return _DOMAINS_CACHE
+    """Allowed email domains from config.toml ALLOWED_EMAIL."""
+    return list(config.ALLOWED_EMAIL)
 
 
 def _gen_email(domain: Optional[str] = None) -> str:
-    """Generate random email with random Tempik domain."""
+    """Generate a random email using an allowed domain."""
     local_part = "th_" + "".join(
         secrets.choice(string.ascii_lowercase + string.digits) for _ in range(10)
     )
     if domain is None:
-        domain = random.choice(_get_domains())
+        domains = _get_domains()
+        if not domains:
+            raise RuntimeError(
+                "No ALLOWED_EMAIL domains configured in config.toml"
+            )
+        domain = random.choice(domains)
     return f"{local_part}@{domain}"
 
 
@@ -208,6 +193,24 @@ def _print_banner(clear: bool = True):
 # single account setup
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _wait_for_verification(email: str, timeout: Optional[float] = None) -> Optional[str]:
+    """
+    Poll the local temp-mail inbox until a TokenHarbor verification link or
+    code arrives. Returns the link (preferred) or the 6-digit code, or None.
+    """
+    timeout = config.TEMPMAIL_TIMEOUT if timeout is None else timeout
+    mail = TempMailClient()
+    msg = mail.wait_for_message(
+        email,
+        timeout=timeout,
+        sender_contains="tokenharbor",
+    )
+    if not msg:
+        return None
+    body = msg.get("body", "") or ""
+    return extract_verification_link(body, _TH_BASE_URL) or extract_verification_code(body)
+
+
 def _run_single_setup(
     email: str,
     password: str,
@@ -228,44 +231,29 @@ def _run_single_setup(
         progress.update(parent_task, description=f"[cyan]Signup: {email}[/cyan]")
     result = client.signup(email, password)
     if not result.get("ok"):
-        if progress:
-            console.print(f"  [red]✗ Signup failed:[/red] {result.get('error')}")
+        console.print(f"  [red]✗ Signup failed:[/red] {result.get('error')}")
         return None
 
     # ── step 2: wait for verification email ─────────────────────────────
     if progress and parent_task is not None:
         progress.update(parent_task, description=f"[cyan]Waiting email: {email}[/cyan]")
-    tempik = TempikClient()
-    local_part = email.split("@")[0]
-    domain = email.split("@")[1]
-    tempik.create_inbox(local_part=local_part, domain=domain)
-
-    verification_link = None
-    for _ in range(24):  # up to 120s with 5s intervals
-        msg = tempik.wait_for_message(email, timeout=5)
-        if msg:
-            body = msg.get("body", "")
-            match = re.search(r"https://tokenharbor\.ai/verify-email\?token=[^\s\"<>]+", body)
-            if match:
-                verification_link = match.group()
-                break
-    if not verification_link:
-        if progress:
-            console.print(f"  [red]✗ No verification email for {email}[/red]")
+    verification = _wait_for_verification(email)
+    if not verification:
+        console.print(f"  [red]✗ No verification email for {email}[/red]")
         return None
 
     # ── step 3: verify email ────────────────────────────────────────────
     if progress and parent_task is not None:
         progress.update(parent_task, description=f"[cyan]Verify: {email}[/cyan]")
-    client.verify_email(verification_link)
+    if not client.verify_email(verification):
+        console.print(f"  [yellow]⚠ Email verification not confirmed for {email}[/yellow]")
 
     # ── step 4: login ───────────────────────────────────────────────────
     if progress and parent_task is not None:
         progress.update(parent_task, description=f"[cyan]Login: {email}[/cyan]")
     login_result = client.login(email, password)
     if not login_result.get("ok"):
-        if progress:
-            console.print(f"  [red]✗ Login failed for {email}:[/red] {login_result.get('error')}")
+        console.print(f"  [red]✗ Login failed for {email}:[/red] {login_result.get('error')}")
         return None
 
     # ── step 5: create API key ──────────────────────────────────────────
@@ -274,8 +262,7 @@ def _run_single_setup(
     key_result = client.create_api_key("auto-cli")
     api_key = key_result.get("plaintext") or key_result.get("key", {}).get("plaintext")
     if not api_key:
-        if progress:
-            console.print(f"  [red]✗ API key failed for {email}[/red]")
+        console.print(f"  [red]✗ API key failed for {email}[/red]")
         return None
 
     # ── step 6: enable free models ──────────────────────────────────────
@@ -295,7 +282,12 @@ def _run_single_setup(
 
 def _run_full_setup(email: Optional[str] = None, password: Optional[str] = None) -> int:
     """Complete flow: register → verify → login → create key → enable free → test."""
-    email = email or _gen_email()
+    try:
+        email = email or _gen_email()
+    except RuntimeError as e:
+        _print_banner()
+        console.print(f"[red]✗ {e}[/red]")
+        return 1
     password = password or _gen_password()
 
     _print_banner()
@@ -306,12 +298,12 @@ def _run_full_setup(email: Optional[str] = None, password: Optional[str] = None)
     info.add_column(style="white")
     info.add_row("Email    ", email)
     info.add_row("Password ", password)
-    info.add_row("Domains  ", ", ".join(domains))
+    info.add_row("Domains  ", ", ".join(domains) or "[red]none[/red]")
     console.print(Panel(info, title="[bold]Account Info[/bold]", border_style="cyan"))
 
     capsolver_key = _load_capsolver_key()
     if not capsolver_key:
-        console.print(f"[red]✗ Capsolver key not found at {_CAPSOLVER_KEY_FILE}[/red]")
+        console.print("[red]✗ Capsolver API key not configured in config.toml[/red]")
         return 1
 
     # check & pick working proxy
@@ -374,10 +366,13 @@ def _run_batch(count: int) -> int:
 
     capsolver_key = _load_capsolver_key()
     if not capsolver_key:
-        console.print(f"[red]✗ Capsolver key not found at {_CAPSOLVER_KEY_FILE}[/red]")
+        console.print("[red]✗ Capsolver API key not configured in config.toml[/red]")
         return 1
 
     domains = _get_domains()
+    if not domains:
+        console.print("[red]✗ No ALLOWED_EMAIL domains configured in config.toml[/red]")
+        return 1
     console.print(f"  [dim]Domains:[/dim] {', '.join(domains)}")
     console.print(f"  [dim]Accounts to create:[/dim] {count}")
     console.print()
@@ -456,7 +451,7 @@ def _run_create_key(email: str, password: str, label: str = "auto-cli") -> int:
     _print_banner()
     capsolver_key = _load_capsolver_key()
     if not capsolver_key:
-        console.print("[red]✗ Capsolver key not found[/red]")
+        console.print("[red]✗ Capsolver API key not configured[/red]")
         return 1
 
     proxy = _load_random_proxy()
@@ -490,7 +485,7 @@ def _run_check_proxies() -> int:
     _print_banner()
     all_proxies = _load_all_proxies()
     if not all_proxies:
-        console.print("[yellow]No proxies found in proxy file[/yellow]")
+        console.print("[yellow]No proxies configured[/yellow]")
         return 1
 
     console.print(f"[bold cyan]Checking {len(all_proxies)} proxies...[/bold cyan]")
@@ -633,7 +628,7 @@ def _interactive_menu() -> int:
         status_grid.add_column(justify="center")
         caps_status = "[green]✓ Capsolver ready[/green]" if capsolver_key else "[red]✗ Capsolver missing[/red]"
         proxy_status = "[green]✓ Proxy ready[/green]" if proxy else "[yellow]⚠ Proxy none[/yellow]"
-        domain_status = f"[dim]📧 {', '.join(domains)}[/dim]"
+        domain_status = f"[dim]📧 {', '.join(domains)}[/dim]" if domains else "[red]✗ No domains[/red]"
         status_grid.add_row(caps_status, proxy_status, domain_status)
         console.print(Panel(status_grid, border_style="dim cyan", padding=(0, 2)))
         console.print()

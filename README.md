@@ -12,7 +12,7 @@ cd harbor
 python3 -m venv .venv && source .venv/bin/activate
 pip install rich requests
 cp tools/tokenharbor/example.config.toml tools/tokenharbor/config.toml
-# edit config.toml with your Capsolver key + proxy list
+# edit tools/tokenharbor/config.toml (ALLOWED_EMAIL, proxy, capsolver key)
 python3 -m tools.tokenharbor.cli
 ```
 

@@ -7,7 +7,7 @@ Key features:
 - Auto-extracts deployment IDs and server action hashes from page
 - Cookie-based authentication for API endpoints
 - Proxy support for IP rotation
-- Disposable email via Tempik
+- Disposable email via local temp-mail API
 - Config from config.toml
 """
 
@@ -15,22 +15,17 @@ from __future__ import annotations
 
 import json
 import re
-import time
 import uuid
 import base64
-import tomllib
-from pathlib import Path
 from typing import Optional
 
 import requests
 
-# Load config
-_CONFIG_PATH = Path(__file__).resolve().parent / "config.toml"
-with open(_CONFIG_PATH, "rb") as _f:
-    _cfg = tomllib.load(_f)
+from tools.tokenharbor import config
+from tools.tokenharbor.capsolver import solve_turnstile
 
-BASE_URL = _cfg["tokenharbor"]["base_url"]
-TURNSTILE_SITEKEY = _cfg["tokenharbor"]["turnstile_sitekey"]
+BASE_URL = config.BASE_URL
+TURNSTILE_SITEKEY = config.TURNSTILE_SITEKEY
 
 
 class TokenHarborClient:
@@ -39,14 +34,10 @@ class TokenHarborClient:
     def __init__(self, capsolver_key: Optional[str] = None, proxy: Optional[str] = None) -> None:
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/130.0.0.0 Safari/537.36"
-            ),
+            "User-Agent": config.USER_AGENT,
             "Origin": BASE_URL,
         })
-        self._capsolver_key: Optional[str] = capsolver_key
+        self._capsolver_key: Optional[str] = capsolver_key or config.CAPSOLVER_API_KEY
         self._proxy: Optional[str] = proxy
         self._proxies: Optional[dict] = {"http": proxy, "https": proxy} if proxy else None
 
@@ -57,7 +48,7 @@ class TokenHarborClient:
 
         # State
         self._fingerprint: str = str(uuid.uuid4())
-        self._timezone: str = "Asia/Jakarta"
+        self._timezone: str = config.TIMEZONE
         self._access_token: Optional[str] = None
 
     # ------------------------------------------------------------------
@@ -121,45 +112,15 @@ class TokenHarborClient:
     # ------------------------------------------------------------------
 
     def _solve_turnstile(self, page_url: str, timeout: float = 90) -> Optional[str]:
-        """Solve Turnstile via Capsolver. Returns token or None."""
+        """Solve Turnstile via the shared Capsolver module. Returns token or None."""
         if not self._capsolver_key:
             return None
-
-        r = requests.post(
-            "https://api.capsolver.com/createTask",
-            json={
-                "clientKey": self._capsolver_key,
-                "task": {
-                    "type": "AntiTurnstileTaskProxyLess",
-                    "websiteURL": page_url,
-                    "websiteKey": TURNSTILE_SITEKEY,
-                },
-            },
-            timeout=15,
+        return solve_turnstile(
+            page_url=page_url,
+            sitekey=TURNSTILE_SITEKEY,
+            api_key=self._capsolver_key,
+            timeout=timeout,
         )
-        data = r.json()
-        if data.get("errorId") != 0:
-            print(f"  Capsolver error: {data.get('errorDescription', data)}")
-            return None
-
-        task_id = data["taskId"]
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            time.sleep(3)
-            r = requests.post(
-                "https://api.capsolver.com/getTaskResult",
-                json={"clientKey": self._capsolver_key, "taskId": task_id},
-                timeout=10,
-            )
-            data = r.json()
-            if data.get("status") == "ready":
-                return data["solution"]["token"]
-            if data.get("errorId") != 0:
-                print(f"  Capsolver error: {data.get('errorDescription', data)}")
-                return None
-
-        print("  Capsolver timeout")
-        return None
 
     # ------------------------------------------------------------------
     # Next.js Server Action helpers

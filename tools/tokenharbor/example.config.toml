@@ -1,18 +1,45 @@
 # TokenHarbor Auto CLI Configuration
 # Copy this file to config.toml and fill in your values.
-# WARNING: config.toml is gitignored — do NOT commit real credentials!
+# WARNING: config.toml contains credentials — it is gitignored. Do NOT commit.
+
+# Domains that may receive mail on your local temp-mail server.
+# Comma-separated (multi value). Must be domains your server accepts.
+# Example: "mpruy.my.id,example.com,another.tld"
+ALLOWED_EMAIL = "your-domain.com"
 
 [tokenharbor]
 base_url = "https://tokenharbor.ai"
 turnstile_sitekey = "0x4AAAAAADBuC8Knz1EJZx9-"
+signup_url = "https://tokenharbor.ai/login?mode=signup"
+signin_url = "https://tokenharbor.ai/login"
+user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+timezone = "Asia/Jakarta"
 
-[tempik]
-# Self-host Tempik: https://github.com/hirotomasato/tempik
-base_url = "https://your-tempik-instance.com"
+[tempmail]
+base_url = "http://localhost:8000"
+timeout = 120
+poll_interval = 3
+limit = 50
+
+[capsolver]
+enabled = true
+api_key = "CAP-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+timeout = 90
+poll_interval = 3
+
+[proxy]
+enabled = true
+# DataImpulse direct (rotating gateway)
+protocol = "http"
+host = "gw.dataimpulse.com"
+port = 823
+username = "your-dataimpulse-user"
+password = "your-dataimpulse-pass"
+check_timeout = 8
+# Optional extra proxies (full URLs). Leave empty if not used.
+# list = ["http://user:pass@host:port"]
 
 [files]
-capsolver_key = "tools/.capsolver_key"
-proxy_list = "tools/proxies.txt"
 account_output = "account.json"
 
 [models]

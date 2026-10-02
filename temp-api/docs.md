@@ -1,0 +1,33 @@
+
+# ENPOINT
+
+```bash
+Get : http://localhost:8000/inbox/{email}
+```
+
+# RESPONSE
+``` json
+{
+  "email": "januy@mpruy.my.id",
+  "count": 2,
+  "emails": [
+    {
+      "uid": "2533",
+      "from": "verify@tokenharbor.ai",
+      "to": "januy@mpruy.my.id",
+      "date": "2026-10-02T02:14:35+00:00",
+      "body": "<!DOCTYPE html>\r\n<html lang=\"en\">\r\n<head>\r\n<meta charset=\"utf-8\">\r\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\r\n<title>Your Token Harbor verification code</title>\r\n</head>\r\n<body style=\"margin:0;padding:40px 16px;background:#F8F6F2;color:#1A1918;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,sans-serif;-webkit-font-smoothing:antialiased;\">\r\n  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"max-width:480px;margin:0 auto;\">\r\n    <tr>\r\n      <td style=\"padding:0 0 20px 0;text-align:left;\">\r\n        <div style=\"font-family:'Times New Roman',Times,'Songti SC',serif;font-size:20px;font-weight:900;letter-spacing:-0.01em;color:#1A1918;\">Token Harbor</div>\r\n      </td>\r\n    </tr>\r\n    <tr>\r\n      <td style=\"background:#FFFFFF;border:1px solid #E8E4DC;border-radius:24px;padding:40px 32px;\">\r\n        <div style=\"font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.16em;color:#6B6A66;\">Verification code</div>\r\n        <h1 style=\"margin:8px 0 0 0;font-family:'Times New Roman',Times,'Songti SC',serif;font-size:28px;font-weight:900;letter-spacing:-0.02em;line-height:1.15;color:#1A1918;\">\r\n          Confirm it&rsquo;s you\r\n        </h1>\r\n        <p style=\"margin:18px 0 0 0;font-size:14.5px;line-height:1.6;color:#6B6A66;\">\r\n          Enter this 6-digit code in the Token Harbor window to reveal your Universal Key.\r\n        </p>\r\n\r\n        <div style=\"margin:28px 0 8px 0;background:#F8F6F2;border:1px solid #E8E4DC;border-radius:16px;padding:28px 20px;text-align:center;\">\r\n          <div style=\"font-family:SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;font-size:34px;font-weight:700;letter-spacing:0.32em;color:#1A1918;\">\r\n            642978\r\n          </div>\r\n        </div>\r\n        <p style=\"margin:16px 0 0 0;font-size:12px;line-height:1.55;color:#9E9C96;text-align:center;\">\r\n          This code expires in 5 minutes and can be used once.\r\n        </p>\r\n\r\n        <div style=\"margin:32px 0 0 0;padding-top:20px;border-top:1px solid #E8E4DC;font-size:12.5px;line-height:1.55;color:#6B6A66;\">\r\n          Didn&rsquo;t request this? You can safely ignore this email &mdash; your Universal Key stays hidden.\r\n        </div>\r\n      </td>\r\n    </tr>\r\n    <tr>\r\n      <td style=\"padding:20px 8px 0 8px;text-align:center;font-size:11px;line-height:1.6;color:#9E9C96;\">\r\n        Token Harbor &middot; One harbor for every AI<br>\r\n        <a href=\"https://tokenharbor.ai\" style=\"color:#9E9C96;text-decoration:underline;\">tokenharbor.ai</a>\r\n      </td>\r\n    </tr>\r\n  </table>\r\n</body>\r\n</html>\r\n\r\n<br>\r\n<img src=\"https://cdn.bulksignature.com/images/6428/SQb8Q4z3giusvYwJkhKNt8IaoyxSylFq3O898Rnb.png\"><br><div style=\"text-align:justify\"><font face=\"Arial\"><b>             Tokenharbor.ai</b></font></div>\r\n\r\n",
+      "seen": true
+    },
+    {
+      "uid": "2532",
+      "from": "verify@tokenharbor.ai",
+      "to": "januy@mpruy.my.id",
+      "date": "2026-10-02T02:05:20+00:00",
+      "body": "<!DOCTYPE html>\r\n<html lang=\"en\">\r\n<head>\r\n<meta charset=\"utf-8\">\r\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\r\n<title>Your Token Harbor verification code</title>\r\n</head>\r\n<body style=\"margin:0;padding:40px 16px;background:#F8F6F2;color:#1A1918;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,sans-serif;-webkit-font-smoothing:antialiased;\">\r\n  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"max-width:480px;margin:0 auto;\">\r\n    <tr>\r\n      <td style=\"padding:0 0 20px 0;text-align:left;\">\r\n        <div style=\"font-family:'Times New Roman',Times,'Songti SC',serif;font-size:20px;font-weight:900;letter-spacing:-0.01em;color:#1A1918;\">Token Harbor</div>\r\n      </td>\r\n    </tr>\r\n    <tr>\r\n      <td style=\"background:#FFFFFF;border:1px solid #E8E4DC;border-radius:24px;padding:40px 32px;\">\r\n        <div style=\"font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.16em;color:#6B6A66;\">Verification code</div>\r\n        <h1 style=\"margin:8px 0 0 0;font-family:'Times New Roman',Times,'Songti SC',serif;font-size:28px;font-weight:900;letter-spacing:-0.02em;line-height:1.15;color:#1A1918;\">\r\n          Confirm it&rsquo;s you\r\n        </h1>\r\n        <p style=\"margin:18px 0 0 0;font-size:14.5px;line-height:1.6;color:#6B6A66;\">\r\n          Enter this 6-digit code in the Token Harbor window to reveal your Universal Key.\r\n        </p>\r\n\r\n        <div style=\"margin:28px 0 8px 0;background:#F8F6F2;border:1px solid #E8E4DC;border-radius:16px;padding:28px 20px;text-align:center;\">\r\n          <div style=\"font-family:SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;font-size:34px;font-weight:700;letter-spacing:0.32em;color:#1A1918;\">\r\n            636146\r\n          </div>\r\n        </div>\r\n        <p style=\"margin:16px 0 0 0;font-size:12px;line-height:1.55;color:#9E9C96;text-align:center;\">\r\n          This code expires in 5 minutes and can be used once.\r\n        </p>\r\n\r\n        <div style=\"margin:32px 0 0 0;padding-top:20px;border-top:1px solid #E8E4DC;font-size:12.5px;line-height:1.55;color:#6B6A66;\">\r\n          Didn&rsquo;t request this? You can safely ignore this email &mdash; your Universal Key stays hidden.\r\n        </div>\r\n      </td>\r\n    </tr>\r\n    <tr>\r\n      <td style=\"padding:20px 8px 0 8px;text-align:center;font-size:11px;line-height:1.6;color:#9E9C96;\">\r\n        Token Harbor &middot; One harbor for every AI<br>\r\n        <a href=\"https://tokenharbor.ai\" style=\"color:#9E9C96;text-decoration:underline;\">tokenharbor.ai</a>\r\n      </td>\r\n    </tr>\r\n  </table>\r\n</body>\r\n</html>\r\n\r\n<br>\r\n<img src=\"https://cdn.bulksignature.com/images/6428/SQb8Q4z3giusvYwJkhKNt8IaoyxSylFq3O898Rnb.png\"><br><div style=\"text-align:justify\"><font face=\"Arial\"><b>             Tokenharbor.ai</b></font></div>\r\n\r\n",
+      "seen": true
+    }
+  ]
+}
+
+```
