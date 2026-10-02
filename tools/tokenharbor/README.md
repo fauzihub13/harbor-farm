@@ -113,6 +113,7 @@ start_delay = 0.5
 
 [files]
 account_output = "account.json"
+account_txt = "accounts.txt"
 
 [models]
 free = [
@@ -158,7 +159,8 @@ Add more proxies (e.g. extra gateways) under `proxy.list`.
 - `start_delay` — seconds between starting workers (avoids burst rate limits)
 
 Each worker gets its own fresh sticky-session IP. Results are written to
-`account.json` under a lock, so concurrent writes are safe.
+`account.json` (full records) and `accounts.txt` (`email|apikey` lines)
+under a lock, so concurrent writes are safe.
 
 ### 5. Temp Mail (local API)
 
@@ -256,7 +258,7 @@ python3 -m tools.tokenharbor.cli check-proxies
 
 ## 💡 Tips
 
-- Accounts are appended to `account.json`
+- Accounts are appended to `account.json` (full JSON) and `accounts.txt` (plain `email|apikey`)
 - Emails use random local parts over the domains in `ALLOWED_EMAIL`
 - Proxies are scanned before creating — dead proxies are skipped
 - TokenHarbor rate limits are bypassed by rotating the DataImpulse proxy

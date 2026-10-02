@@ -112,6 +112,7 @@ THREADS_START_DELAY: float = float(THREADS.get("start_delay", 0.5))
 # ── files ──────────────────────────────────────────────────────────────────
 FILES = _RAW.get("files", {})
 ACCOUNT_OUTPUT: str = FILES.get("account_output", "account.json")
+ACCOUNT_TXT: str = FILES.get("account_txt", "accounts.txt")
 
 
 # ── models ─────────────────────────────────────────────────────────────────

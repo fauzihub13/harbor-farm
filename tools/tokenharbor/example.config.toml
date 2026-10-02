@@ -54,6 +54,7 @@ start_delay = 0.5
 
 [files]
 account_output = "account.json"
+account_txt = "accounts.txt"
 
 [models]
 # Free models available on TokenHarbor

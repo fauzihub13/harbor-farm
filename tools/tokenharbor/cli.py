@@ -32,6 +32,7 @@ from tools.tokenharbor import config
 
 _TH_BASE_URL = config.BASE_URL
 _ACCOUNT_FILE = PROJECT_ROOT / config.ACCOUNT_OUTPUT
+_ACCOUNT_TXT_FILE = PROJECT_ROOT / config.ACCOUNT_TXT
 _FREE_MODELS = config.FREE_MODELS
 
 # ── rich ────────────────────────────────────────────────────────────────────
@@ -236,6 +237,19 @@ def _save_account_unlocked(account: dict, path: Optional[str] = None) -> None:
         filepath.write_text(json.dumps(existing, indent=2))
     else:
         filepath.write_text(json.dumps(account, indent=2))
+
+    _save_account_txt(account)
+
+
+def _save_account_txt(account: dict) -> None:
+    """Append an ``email|apikey`` line to the plain-text account file."""
+    email = account.get("email")
+    api_key = account.get("api_key")
+    if not email or not api_key:
+        return
+    txt_path = Path(_ACCOUNT_TXT_FILE)
+    with txt_path.open("a") as f:
+        f.write(f"{email}|{api_key}\n")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

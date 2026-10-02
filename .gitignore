@@ -11,6 +11,7 @@ venv/
 
 # Sensitive — do NOT commit
 account.json
+accounts.txt
 *.account.json
 
 # Config with real credentials (all settings live here)
