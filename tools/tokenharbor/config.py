@@ -94,6 +94,19 @@ PROXY_USERNAME: Optional[str] = PX.get("username")
 PROXY_PASSWORD: Optional[str] = PX.get("password")
 PROXY_CHECK_TIMEOUT: float = float(PX.get("check_timeout", 8))
 PROXY_LIST: list[str] = [str(p) for p in PX.get("list", []) if str(p).strip()]
+# Dynamic rotation: pin a distinct sticky session (IP) per worker thread.
+PROXY_STICKY: bool = bool(PX.get("sticky", True))
+PROXY_SESSION_PARAM: str = PX.get("session_param", "sessid")
+PROXY_VERIFY_IP: bool = bool(PX.get("verify_ip", True))
+PROXY_IP_CHECK_URL: str = PX.get("ip_check_url", "https://ipinfo.io/json")
+PROXY_MAX_IP_RETRIES: int = int(PX.get("max_ip_retries", 5))
+
+
+# ── threads ────────────────────────────────────────────────────────────────
+THREADS = _RAW.get("threads", {})
+THREADS_ENABLED: bool = bool(THREADS.get("enabled", True))
+THREADS_MAX_WORKERS: int = int(THREADS.get("max_workers", 5))
+THREADS_START_DELAY: float = float(THREADS.get("start_delay", 0.5))
 
 
 # ── files ──────────────────────────────────────────────────────────────────
@@ -116,6 +129,8 @@ def build_proxy_url(protocol: str, host: str, port, username: str, password: str
 
 def load_proxies() -> list[str]:
     """All usable proxy URLs: explicit list first, then the DataImpulse gateway."""
+    if not PROXY_ENABLED:
+        return []
     proxies = list(PROXY_LIST)
     if PROXY_HOST and PROXY_PORT:
         proxies.append(
@@ -128,3 +143,33 @@ def load_proxies() -> list[str]:
             )
         )
     return proxies
+
+
+def session_proxy_url(session_id: str) -> Optional[str]:
+    """
+    Build a sticky-session proxy URL that pins one IP per session id.
+
+    DataImpulse expects parameters appended to the username with ``__``,
+    e.g. ``user__sessid.<id>``. Returns None when no gateway is configured.
+    """
+    if not (PROXY_HOST and PROXY_PORT):
+        return None
+    if not PROXY_ENABLED:
+        return None
+    if not PROXY_STICKY:
+        return build_proxy_url(
+            PROXY_PROTOCOL, PROXY_HOST, PROXY_PORT, PROXY_USERNAME or "", PROXY_PASSWORD or ""
+        )
+    user = PROXY_USERNAME or ""
+    if PROXY_SESSION_PARAM:
+        user = f"{user}__{PROXY_SESSION_PARAM}.{session_id}"
+    return build_proxy_url(
+        PROXY_PROTOCOL, PROXY_HOST, PROXY_PORT, user, PROXY_PASSWORD or ""
+    )
+
+
+def new_session_id() -> str:
+    """A unique sticky-session id (letters/digits only, safe in the username)."""
+    import uuid
+
+    return "th" + uuid.uuid4().hex[:16]

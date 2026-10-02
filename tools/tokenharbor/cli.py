@@ -17,6 +17,7 @@ import random
 import secrets
 import string
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -42,6 +43,17 @@ from rich.prompt import Prompt, Confirm, IntPrompt
 from rich import box
 
 console = Console()
+# serializes console output and shared writes across worker threads
+_console_lock = threading.Lock()
+# exit IPs already claimed by a worker thread (dynamic rotation dedupe)
+_USED_IPS: set[str] = set()
+_USED_IPS_LOCK = threading.Lock()
+
+
+def _log(*args, **kwargs) -> None:
+    """Thread-safe console.print."""
+    with _console_lock:
+        console.print(*args, **kwargs)
 
 # ── local imports ───────────────────────────────────────────────────────────
 from tools.tokenharbor.client import TokenHarborClient
@@ -68,6 +80,54 @@ def _load_all_proxies() -> list[str]:
 def _load_random_proxy() -> Optional[str]:
     proxies = _load_all_proxies()
     return random.choice(proxies) if proxies else None
+
+
+def _proxy_exit_ip(proxy: str, timeout: Optional[float] = None) -> Optional[str]:
+    """Return the exit IP for a proxy, or None if unreachable."""
+    import requests as _r
+
+    timeout = config.PROXY_CHECK_TIMEOUT if timeout is None else timeout
+    try:
+        resp = _r.get(
+            config.PROXY_IP_CHECK_URL,
+            proxies={"http": proxy, "https": proxy},
+            timeout=timeout,
+        )
+        if not resp.ok:
+            return None
+        data = resp.json()
+        return data.get("ip") if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _get_fresh_proxy() -> tuple[Optional[str], Optional[str]]:
+    """
+    Build a rotating proxy with a NEW sticky session so it exits from a
+    fresh IP, verifying that the IP is not already used by another thread.
+
+    Returns ``(proxy_url, exit_ip)``. Falls back to the shared gateway if
+    sticky sessions are unavailable.
+    """
+    gateway = config.session_proxy_url(config.new_session_id())
+    if gateway is None:
+        return None, None
+
+    attempts = max(1, config.PROXY_MAX_IP_RETRIES)
+    last_ip: Optional[str] = None
+    for _ in range(attempts):
+        ip = _proxy_exit_ip(gateway)
+        if not ip:
+            time.sleep(1)
+            continue
+        last_ip = ip
+        with _USED_IPS_LOCK:
+            if ip not in _USED_IPS:
+                _USED_IPS.add(ip)
+                return gateway, ip
+        # IP already claimed by another thread — rotate to a new session.
+        gateway = config.session_proxy_url(config.new_session_id())
+    return gateway, last_ip
 
 
 def _check_proxy(proxy: str, timeout: Optional[float] = None) -> bool:
@@ -107,7 +167,16 @@ def _get_working_proxy(checked_alive: Optional[list[str]] = None) -> Optional[st
 
 
 def _pick_working_proxy_interactive() -> Optional[str]:
-    """Interactive: check proxies and pick a working one. Returns proxy URL or None."""
+    """Pick a usable proxy: a fresh sticky session when available, else scan list."""
+    gateway = config.session_proxy_url(config.new_session_id())
+    if gateway:
+        console.print("[bold cyan]Checking rotating proxy...[/bold cyan]")
+        if _check_proxy(gateway):
+            console.print("  [green]✓ rotating proxy alive[/green]")
+            return gateway
+        console.print("  [red]✗ rotating proxy unreachable[/red]")
+        return None
+
     all_proxies = _load_all_proxies()
     if not all_proxies:
         console.print("[yellow]No proxies configured[/yellow]")
@@ -149,6 +218,11 @@ def _gen_email(domain: Optional[str] = None) -> str:
 
 
 def _save_account(account: dict, path: Optional[str] = None) -> None:
+    with _console_lock:
+        _save_account_unlocked(account, path)
+
+
+def _save_account_unlocked(account: dict, path: Optional[str] = None) -> None:
     filepath = Path(path or _ACCOUNT_FILE)
     if filepath.exists():
         try:
@@ -216,58 +290,54 @@ def _run_single_setup(
     password: str,
     capsolver_key: str,
     proxy: Optional[str] = None,
-    progress: Optional[Progress] = None,
-    parent_task: Optional[int] = None,
-) -> Optional[dict]:
+    on_step=None,
+) -> dict:
     """
-    Run full setup for ONE account. Returns account dict or None.
-    If progress/parent_task are passed, updates inside that progress tree (batch mode).
+    Run full setup for ONE account.
+
+    Returns the account dict on success, or ``{"error": <message>}`` on failure.
+    ``on_step`` is an optional callback ``(step_name)`` for progress reporting;
+    it must itself be thread-safe (the batch runner wraps it).
     """
+    def step(name: str) -> None:
+        if on_step:
+            on_step(name)
+
     proxy = proxy or _load_random_proxy()
     client = TokenHarborClient(capsolver_key=capsolver_key, proxy=proxy)
 
     # ── step 1: signup ──────────────────────────────────────────────────
-    if progress and parent_task is not None:
-        progress.update(parent_task, description=f"[cyan]Signup: {email}[/cyan]")
+    step("signup")
     result = client.signup(email, password)
     if not result.get("ok"):
-        console.print(f"  [red]✗ Signup failed:[/red] {result.get('error')}")
-        return None
+        return {"error": f"Signup failed: {result.get('error')}"}
 
     # ── step 2: wait for verification email ─────────────────────────────
-    if progress and parent_task is not None:
-        progress.update(parent_task, description=f"[cyan]Waiting email: {email}[/cyan]")
+    step("email")
     verification = _wait_for_verification(email)
     if not verification:
-        console.print(f"  [red]✗ No verification email for {email}[/red]")
-        return None
+        return {"error": f"No verification email for {email}"}
 
     # ── step 3: verify email ────────────────────────────────────────────
-    if progress and parent_task is not None:
-        progress.update(parent_task, description=f"[cyan]Verify: {email}[/cyan]")
+    step("verify")
     if not client.verify_email(verification):
-        console.print(f"  [yellow]⚠ Email verification not confirmed for {email}[/yellow]")
+        _log(f"  [yellow]⚠ Email verification not confirmed for {email}[/yellow]")
 
     # ── step 4: login ───────────────────────────────────────────────────
-    if progress and parent_task is not None:
-        progress.update(parent_task, description=f"[cyan]Login: {email}[/cyan]")
+    step("login")
     login_result = client.login(email, password)
     if not login_result.get("ok"):
-        console.print(f"  [red]✗ Login failed for {email}:[/red] {login_result.get('error')}")
-        return None
+        return {"error": f"Login failed for {email}: {login_result.get('error')}"}
 
     # ── step 5: create API key ──────────────────────────────────────────
-    if progress and parent_task is not None:
-        progress.update(parent_task, description=f"[cyan]Key: {email}[/cyan]")
+    step("key")
     key_result = client.create_api_key("auto-cli")
     api_key = key_result.get("plaintext") or key_result.get("key", {}).get("plaintext")
     if not api_key:
-        console.print(f"  [red]✗ API key failed for {email}[/red]")
-        return None
+        return {"error": f"API key failed for {email}"}
 
     # ── step 6: enable free models ──────────────────────────────────────
-    if progress and parent_task is not None:
-        progress.update(parent_task, description=f"[cyan]Free models: {email}[/cyan]")
+    step("free")
     free_result = client.enable_free_models()
     free_enabled = free_result.get("ok") or free_result.get("free_models_enabled")
 
@@ -320,10 +390,28 @@ def _run_full_setup(email: Optional[str] = None, password: Optional[str] = None)
     ) as progress:
         task = progress.add_task("[cyan]Setup...", total=6)
 
-        progress.update(task, description="[cyan]Signing up...")
-        account = _run_single_setup(email, password, capsolver_key, proxy=proxy, progress=progress, parent_task=task)
-        if account is None:
+        steps = ["signup", "email", "verify", "login", "key", "free"]
+        labels = {
+            "signup": "Signing up",
+            "email": "Waiting email",
+            "verify": "Verifying",
+            "login": "Logging in",
+            "key": "Creating API key",
+            "free": "Enabling free models",
+        }
+
+        def on_step(name: str) -> None:
+            if name in steps:
+                progress.update(
+                    task,
+                    completed=steps.index(name),
+                    description=f"[cyan]{labels[name]}...[/cyan]",
+                )
+
+        account = _run_single_setup(email, password, capsolver_key, proxy=proxy, on_step=on_step)
+        if account.get("error"):
             progress.stop()
+            console.print(f"[red]✗ {account['error']}[/red]")
             return 1
         progress.update(task, completed=6)
 
@@ -361,7 +449,7 @@ def _run_full_setup(email: Optional[str] = None, password: Optional[str] = None)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _run_batch(count: int) -> int:
-    """Create N accounts in batch mode."""
+    """Create N accounts in batch mode (multi-threaded when enabled)."""
     _print_banner()
 
     capsolver_key = _load_capsolver_key()
@@ -375,49 +463,82 @@ def _run_batch(count: int) -> int:
         return 1
     console.print(f"  [dim]Domains:[/dim] {', '.join(domains)}")
     console.print(f"  [dim]Accounts to create:[/dim] {count}")
-    console.print()
 
-    # pre-check all proxies
+    # pre-check configured proxies (rotating gateway reachability)
     console.print("[bold cyan]Checking proxies...[/bold cyan]")
-    all_proxies = _load_all_proxies()
-    alive, dead = _check_all_proxies(all_proxies)
+    check_proxy = config.session_proxy_url(config.new_session_id())
+    if check_proxy:
+        alive = [check_proxy] if _check_proxy(check_proxy) else []
+        dead = [] if alive else [check_proxy]
+    else:
+        all_proxies = _load_all_proxies()
+        alive, dead = _check_all_proxies(all_proxies)
     if not alive:
         console.print(f"[red]✗ All {len(dead)} proxies are dead![/red]")
         return 1
     console.print(f"  [green]✓ {len(alive)} alive[/green]  [red]✗ {len(dead)} dead[/red]")
+
+    workers = config.THREADS_MAX_WORKERS if config.THREADS_ENABLED else 1
+    workers = max(1, min(workers, count))
+    mode = "multi-threaded" if workers > 1 else "single-threaded"
+    console.print(f"  [dim]Workers:[/dim] {workers} ({mode})")
     console.print()
+
+    # reset per-run IP claim state
+    global _USED_IPS
+    _USED_IPS = set()
 
     accounts: list[dict] = []
     failed = 0
-    working = list(alive)  # copy to rotate through
+    results_lock = threading.Lock()
 
-    for i in range(1, count + 1):
+    def _create_one(index: int) -> None:
+        nonlocal failed
         domain = random.choice(domains)
         email = _gen_email(domain=domain)
         password = _gen_password()
-        proxy = random.choice(working)
 
-        console.print(f"[bold]── [{i}/{count}][/bold] {email} [dim]({domain})[/dim]")
+        # each thread builds its own rotating proxy with a fresh sticky session
+        proxy, ip = _get_fresh_proxy()
+        if proxy is None:
+            proxy = random.choice(alive)
+            ip = _proxy_exit_ip(proxy)
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("[cyan]Working...", total=6)
-            account = _run_single_setup(email, password, capsolver_key, proxy=proxy, progress=progress, parent_task=task)
-            if account is None:
+        with _console_lock:
+            console.print(
+                f"[bold]── [{index}/{count}][/bold] {email} "
+                f"[dim]({domain}, ip={ip or '?'})[/dim]"
+            )
+
+        result = _run_single_setup(email, password, capsolver_key, proxy=proxy)
+
+        if result.get("error"):
+            _log(f"  [red]✗ {result['error']}[/red]")
+        else:
+            _save_account(result)
+            _log(f"  [green]✓ {email}[/green] [dim]→ {result['api_key'][:24]}...[/dim]")
+
+        with results_lock:
+            if result.get("error"):
                 failed += 1
-                progress.update(task, completed=6)
             else:
-                accounts.append(account)
-                _save_account(account)
-                progress.update(task, completed=6, description="[green]✓ Done[/green]")
+                accounts.append(result)
 
-        # small delay between accounts to avoid rate limiting
-        if i < count:
-            time.sleep(2)
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = []
+            for i in range(1, count + 1):
+                futures.append(pool.submit(_create_one, i))
+                time.sleep(config.THREADS_START_DELAY)
+            for _ in as_completed(futures):
+                pass
+    else:
+        for i in range(1, count + 1):
+            _create_one(i)
+            if i < count:
+                time.sleep(2)
 
     # ── summary ─────────────────────────────────────────────────────────
     console.print()

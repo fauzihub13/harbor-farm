@@ -36,8 +36,21 @@ port = 823
 username = "your-dataimpulse-user"
 password = "your-dataimpulse-pass"
 check_timeout = 8
+# Dynamic rotation: give each worker thread its own sticky session (distinct IP).
+sticky = true
+session_param = "sessid"
+# Verify the exit IP differs per thread before using it.
+verify_ip = true
+ip_check_url = "https://ipinfo.io/json"
+max_ip_retries = 5
 # Optional extra proxies (full URLs). Leave empty if not used.
 # list = ["http://user:pass@host:port"]
+
+[threads]
+# Multi-threaded batch creation.
+enabled = true
+max_workers = 5
+start_delay = 0.5
 
 [files]
 account_output = "account.json"

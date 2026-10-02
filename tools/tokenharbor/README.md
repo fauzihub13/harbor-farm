@@ -17,10 +17,12 @@
 - 📧 **Local temp mail** — Polls your self-hosted temp-mail API for the 6-digit verification code
 - 🔑 **API key generation** — Auto create + extract plaintext key
 - 🆓 **Free model activation** — One-click enable all free models
-- 🚀 **Batch mode** — Create N accounts in one go
+- 🚀 **Batch mode** — Create N accounts in parallel across threads
+- 🧵 **Multi-threaded** — Configurable worker pool (`[threads].max_workers`)
+- 🌐 **Dynamic proxy rotation** — Each thread pins its own sticky session (distinct IP), verified via IP check
 - 🛡️ **Proxy auto-check** — Verify proxies before use, filter alive only
 - 🎨 **Rich TUI** — Interactive terminal UI with panels, tables, progress bars
-- ⚙️ **Single config file** — Everything (email domains, proxy, Capsolver) in `config.toml`
+- ⚙️ **Single config file** — Everything (email domains, proxy, Capsolver, threads) in `config.toml`
 
 ## 📦 Requirements
 
@@ -93,8 +95,21 @@ port = 823
 username = "your-dataimpulse-user"
 password = "your-dataimpulse-pass"
 check_timeout = 8
+# Dynamic rotation: give each worker thread its own sticky session (distinct IP).
+sticky = true
+session_param = "sessid"
+# Verify the exit IP differs per thread before using it.
+verify_ip = true
+ip_check_url = "https://ipinfo.io/json"
+max_ip_retries = 5
 # Optional extra proxies (full URLs)
 # list = ["http://user:pass@host:port"]
+
+[threads]
+# Multi-threaded batch creation.
+enabled = true
+max_workers = 5
+start_delay = 0.5
 
 [files]
 account_output = "account.json"
@@ -125,9 +140,27 @@ Configure the DataImpulse rotating gateway credentials in `[proxy]`.
 The CLI builds `protocol://username:password@host:port` automatically and
 scans it before creating accounts — only alive proxies are used.
 
+**Dynamic rotation (per-thread IP):** with `sticky = true`, every worker
+thread appends `__sessid.<unique>` to the username, so DataImpulse exits
+from a distinct IP held for that session. Before using it, the CLI checks
+the exit IP (`ip_check_url`, default `https://ipinfo.io/json`) and rotates
+again if the IP is already claimed by another thread — so each thread is
+guaranteed a different IP.
+
 Add more proxies (e.g. extra gateways) under `proxy.list`.
 
-### 4. Temp Mail (local API)
+### 4. Threads
+
+`[threads]` controls batch parallelism:
+
+- `enabled` — turn multi-threading on/off
+- `max_workers` — number of concurrent account workers
+- `start_delay` — seconds between starting workers (avoids burst rate limits)
+
+Each worker gets its own fresh sticky-session IP. Results are written to
+`account.json` under a lock, so concurrent writes are safe.
+
+### 5. Temp Mail (local API)
 
 The CLI talks to your local temp-mail server (see `temp-api/docs.md`):
 
@@ -228,7 +261,7 @@ python3 -m tools.tokenharbor.cli check-proxies
 - Proxies are scanned before creating — dead proxies are skipped
 - TokenHarbor rate limits are bypassed by rotating the DataImpulse proxy
 - Capsolver solves a Turnstile in ~3-5 seconds
-- Batch mode waits 2 seconds between accounts
+- Batch mode runs `max_workers` accounts in parallel, each on its own sticky IP
 
 ---
 
