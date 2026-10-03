@@ -109,6 +109,14 @@ THREADS_MAX_WORKERS: int = int(THREADS.get("max_workers", 5))
 THREADS_START_DELAY: float = float(THREADS.get("start_delay", 0.5))
 
 
+# ── rate limit (anti "You're doing that a bit fast") ───────────────────────
+RL = _RAW.get("rate_limit", {})
+RATE_SIGNUP_INTERVAL: float = float(RL.get("signup_interval", 0))
+RATE_RETRY_ATTEMPTS: int = int(RL.get("retry_attempts", 2))
+RATE_RETRY_BACKOFF: float = float(RL.get("retry_backoff", 45))
+RATE_BACKOFF_MULTIPLIER: float = float(RL.get("backoff_multiplier", 2))
+
+
 # ── files ──────────────────────────────────────────────────────────────────
 FILES = _RAW.get("files", {})
 ACCOUNT_OUTPUT: str = FILES.get("account_output", "account.json")

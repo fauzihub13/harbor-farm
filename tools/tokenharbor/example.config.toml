@@ -2,10 +2,12 @@
 # Copy this file to config.toml and fill in your values.
 # WARNING: config.toml contains credentials — it is gitignored. Do NOT commit.
 
-# Domains to generate addresses on (must be accepted by BlipMail).
-# Comma-separated (multi value). Get them from GET /api/config -> mailDomains.
-# Example: "mpruy.my.id,jsc.my.id,lemin.my.id,sqw.my.id"
-ALLOWED_EMAIL = "your-domain.com"
+# OPTIONAL email-domain filter.
+# Domains are fetched automatically from BlipMail (GET /api/config -> mailDomains).
+# Leave empty to use ALL BlipMail domains, or set a comma-separated subset
+# to restrict generation to those domains only.
+# Example: "mpruy.my.id,jsc.my.id"
+ALLOWED_EMAIL = ""
 
 [tokenharbor]
 base_url = "https://tokenharbor.ai"
@@ -52,6 +54,16 @@ max_ip_retries = 5
 enabled = true
 max_workers = 5
 start_delay = 0.5
+
+[rate_limit]
+# Anti "You're doing that a bit fast" handling.
+# No global pacing by default: each thread has its own sticky IP, so parallel
+# signups are safe. Set a value > 0 only if you still see burst rate limits.
+signup_interval = 0
+# Retries on a rate-limit error, with growing backoff + fresh IP/fingerprint.
+retry_attempts = 2
+retry_backoff = 45
+backoff_multiplier = 2
 
 [files]
 account_output = "account.json"

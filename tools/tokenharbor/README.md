@@ -66,9 +66,10 @@ python3 -m tools.tokenharbor.cli test-key thk_live_xxxxxxxx
 secret files, no proxy `.txt` files. The file is gitignored — never commit it.
 
 ```toml
-# Domains to generate addresses on (must be accepted by BlipMail).
-# Comma-separated (multi value).
-ALLOWED_EMAIL = "mpruy.my.id,example.com"
+# OPTIONAL email-domain filter.
+# Domains are fetched automatically from BlipMail (GET /api/config -> mailDomains).
+# Leave empty to use ALL BlipMail domains, or set a comma-separated subset.
+ALLOWED_EMAIL = ""
 
 [tokenharbor]
 base_url = "https://tokenharbor.ai"
@@ -124,12 +125,14 @@ free = [
 ]
 ```
 
-### 1. ALLOWED_EMAIL
+### 1. Email domains (auto-fetched)
 
-A comma-separated list of domains to generate addresses on. These must be
-domains your BlipMail instance accepts (see `GET /api/config` → `mailDomains`).
-The CLI generates random local parts and rotates across these domains.
-Both `"a.com, b.com"` and a TOML array `["a.com", "b.com"]` are supported.
+Usable domains come **automatically from BlipMail** (`GET /api/config` →
+`mailDomains`) and are rotated across, so signups spread over every domain
+the instance offers. `ALLOWED_EMAIL` is an **optional filter**: set a
+comma-separated subset to restrict generation to those domains; leave it
+empty for all. If BlipMail is unreachable at start, `ALLOWED_EMAIL` is used
+as fallback. Both `"a.com, b.com"` and a TOML array are supported.
 
 ### 2. Capsolver
 
@@ -164,7 +167,29 @@ Each worker gets its own fresh sticky-session IP. Results are written to
 `account.json` (full records) and `accounts.txt` (`email|apikey` lines)
 under a lock, so concurrent writes are safe.
 
-### 5. Temp Mail (BlipMail)
+### 5. Rate limits ("You're doing that a bit fast")
+
+TokenHarbor throttles signups on multiple axes:
+
+- **Per network/IP** — "Too many sign-ups from this network" after ~3 rapid
+  signups from one IP. Avoided by the per-thread sticky IP rotation.
+- **Per email domain / global burst** — "You're doing that a bit fast" when
+  many signups hit in quick succession (even from different IPs). Triggered
+  by submitting all at once and/or using a single email domain.
+
+Mitigations built in:
+
+- **Per-thread sticky IP** — each worker exits from its own IP, so parallel
+  signups are safe and **no global pacing is needed** (`signup_interval`
+  defaults to 0; raise it only if you still see burst limits).
+- `[rate_limit].retry_attempts` / `retry_backoff` / `backoff_multiplier` —
+  on a rate-limit error, back off and retry with a **fresh proxy IP** and
+  fresh device fingerprint.
+- **Email domain rotation** — domains auto-fetched from BlipMail and rotated
+  across, so signups spread instead of hammering one domain.
+- Per-client User-Agent jitter (Chrome version varies per worker).
+
+### 6. Temp Mail (BlipMail)
 
 The CLI uses [BlipMail](https://blipmail.mpruy.my.id/docs). It is an
 anonymous-session API (no key): fetch a `sessionId` from `GET /api/session`,
@@ -264,7 +289,7 @@ python3 -m tools.tokenharbor.cli check-proxies
 ## 💡 Tips
 
 - Accounts are appended to `account.json` (full JSON) and `accounts.txt` (plain `email|apikey`)
-- Emails use random local parts over the domains in `ALLOWED_EMAIL`
+- Emails use random local parts over BlipMail's domains (auto-fetched, optional `ALLOWED_EMAIL` filter)
 - Proxies are scanned before creating — dead proxies are skipped
 - TokenHarbor rate limits are bypassed by rotating the DataImpulse proxy
 - Capsolver solves a Turnstile in ~3-5 seconds

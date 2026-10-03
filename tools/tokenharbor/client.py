@@ -14,6 +14,7 @@ Key features:
 from __future__ import annotations
 
 import json
+import random
 import re
 import uuid
 import base64
@@ -28,13 +29,23 @@ BASE_URL = config.BASE_URL
 TURNSTILE_SITEKEY = config.TURNSTILE_SITEKEY
 
 
+def _jittered_user_agent(base: str) -> str:
+    """Vary the Chrome major version per client so parallel signups do not
+    share an identical User-Agent string (cheap anti-fingerprint win)."""
+    m = re.search(r"Chrome/(\d+)", base)
+    if not m:
+        return base
+    major = int(m.group(1)) + random.randint(-4, 3)
+    return re.sub(r"Chrome/\d+", f"Chrome/{major}", base)
+
+
 class TokenHarborClient:
     """Automate TokenHarbor signup, verification, API key creation."""
 
     def __init__(self, capsolver_key: Optional[str] = None, proxy: Optional[str] = None) -> None:
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": config.USER_AGENT,
+            "User-Agent": _jittered_user_agent(config.USER_AGENT),
             "Origin": BASE_URL,
         })
         self._capsolver_key: Optional[str] = capsolver_key or config.CAPSOLVER_API_KEY

@@ -49,12 +49,80 @@ _console_lock = threading.Lock()
 # exit IPs already claimed by a worker thread (dynamic rotation dedupe)
 _USED_IPS: set[str] = set()
 _USED_IPS_LOCK = threading.Lock()
+# paces signup submissions across threads (anti rate-limit)
+_SIGNUP_GATE_LOCK = threading.Lock()
+_LAST_SIGNUP_AT: list[float] = [0.0]
 
 
 def _log(*args, **kwargs) -> None:
     """Thread-safe console.print."""
     with _console_lock:
         console.print(*args, **kwargs)
+
+
+_RATE_LIMIT_MARKERS = (
+    "a bit fast",
+    "too many",
+    "rate limit",
+    "too fast",
+    "try again in",
+    "take a breath",
+    "take a moment",
+)
+
+
+def _is_rate_limited(error: Optional[str]) -> bool:
+    """Detect TokenHarbor rate-limit errors ("a bit fast", "too many", ...)."""
+    if not error:
+        return False
+    lowered = error.lower()
+    return any(marker in lowered for marker in _RATE_LIMIT_MARKERS)
+
+
+def _pace_signup() -> None:
+    """
+    Block until ``signup_interval`` has elapsed since the last signup
+    submission (global, across all threads) to avoid burst rate limits.
+    """
+    interval = max(0.0, config.RATE_SIGNUP_INTERVAL)
+    if interval <= 0:
+        return
+    with _SIGNUP_GATE_LOCK:
+        now = time.time()
+        wait = (_LAST_SIGNUP_AT[0] + interval) - now
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_SIGNUP_AT[0] = time.time()
+
+
+def _signup_with_retry(email, password, capsolver_key, proxy, on_step):
+    """
+    Submit signup with global pacing and retry-on-rate-limit.
+
+    On a rate-limit error: back off (growing delay), rotate to a fresh
+    proxy IP and a fresh device fingerprint, then resubmit.
+    """
+    attempts = max(1, 1 + config.RATE_RETRY_ATTEMPTS)
+    backoff = config.RATE_RETRY_BACKOFF
+    last_error = "Signup failed"
+    for attempt in range(1, attempts + 1):
+        _pace_signup()
+        client = TokenHarborClient(capsolver_key=capsolver_key, proxy=proxy)
+        result = client.signup(email, password)
+        if result.get("ok"):
+            return client, result
+        last_error = str(result.get("error") or "Signup failed")
+        if not _is_rate_limited(last_error):
+            return client, result
+        if attempt < attempts:
+            wait = backoff * (config.RATE_BACKOFF_MULTIPLIER ** (attempt - 1))
+            _log(
+                f"  [yellow]⏳ Rate limited ({email}), retrying in {wait:.0f}s "
+                f"(attempt {attempt + 1}/{attempts})[/yellow]"
+            )
+            time.sleep(wait)
+            proxy = _get_fresh_proxy()[0] or proxy
+    return TokenHarborClient(capsolver_key=capsolver_key, proxy=proxy), {"ok": False, "error": last_error}
 
 # ── local imports ───────────────────────────────────────────────────────────
 from tools.tokenharbor.client import TokenHarborClient
@@ -199,13 +267,43 @@ def _gen_password(length: int = 20) -> str:
     return "".join(secrets.choice(chars) for _ in range(length))
 
 
-def _get_domains() -> list[str]:
-    """Allowed email domains from config.toml ALLOWED_EMAIL."""
-    return list(config.ALLOWED_EMAIL)
+_DOMAINS_CACHE: list[str] = []
+_DOMAINS_CACHE_LOCK = threading.Lock()
+
+
+def _get_domains(refresh: bool = False) -> list[str]:
+    """
+    Usable email domains.
+
+    Source of truth is BlipMail's ``GET /api/config`` -> ``mailDomains``.
+    ``ALLOWED_EMAIL`` in config.toml is an OPTIONAL filter: when set, only
+    those domains (intersected with BlipMail's) are used; when empty, all
+    BlipMail domains are used. Cached for the process lifetime.
+    """
+    with _DOMAINS_CACHE_LOCK:
+        if _DOMAINS_CACHE and not refresh:
+            return list(_DOMAINS_CACHE)
+
+        try:
+            domains = TempMailClient().get_domains()
+        except Exception:
+            domains = []
+
+        if not domains:
+            # BlipMail unreachable — fall back to ALLOWED_EMAIL if present.
+            domains = [d for d in config.ALLOWED_EMAIL if d]
+
+        if config.ALLOWED_EMAIL:
+            filtered = [d for d in domains if d in config.ALLOWED_EMAIL]
+            if filtered:
+                domains = filtered
+
+        _DOMAINS_CACHE[:] = domains
+        return list(_DOMAINS_CACHE)
 
 
 def _gen_email(domain: Optional[str] = None) -> str:
-    """Generate a random email using an allowed domain."""
+    """Generate a random email on one of the usable (BlipMail) domains."""
     local_part = "th_" + "".join(
         secrets.choice(string.ascii_lowercase + string.digits) for _ in range(10)
     )
@@ -213,7 +311,8 @@ def _gen_email(domain: Optional[str] = None) -> str:
         domains = _get_domains()
         if not domains:
             raise RuntimeError(
-                "No ALLOWED_EMAIL domains configured in config.toml"
+                "No usable email domains: BlipMail /api/config unreachable "
+                "and ALLOWED_EMAIL is empty"
             )
         domain = random.choice(domains)
     return f"{local_part}@{domain}"
@@ -328,11 +427,10 @@ def _run_single_setup(
             on_step(name)
 
     proxy = proxy or _load_random_proxy()
-    client = TokenHarborClient(capsolver_key=capsolver_key, proxy=proxy)
 
-    # ── step 1: signup ──────────────────────────────────────────────────
+    # ── step 1: signup (paced globally + retried on rate limit) ─────────
     step("signup")
-    result = client.signup(email, password)
+    client, result = _signup_with_retry(email, password, capsolver_key, proxy, on_step)
     if not result.get("ok"):
         return {"error": f"Signup failed: {result.get('error')}"}
 
