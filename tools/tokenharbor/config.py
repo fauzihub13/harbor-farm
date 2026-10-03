@@ -68,12 +68,12 @@ def _parse_allowed(value) -> list[str]:
 ALLOWED_EMAIL: list[str] = _parse_allowed(_RAW.get("ALLOWED_EMAIL"))
 
 
-# ── tempmail ───────────────────────────────────────────────────────────────
+# ── tempmail (BlipMail) ─────────────────────────────────────────────────────
 TM = _RAW.get("tempmail", {})
-TEMPMAIL_BASE_URL: str = TM.get("base_url", "http://localhost:8000")
+TEMPMAIL_BASE_URL: str = TM.get("base_url", "https://blipmail.mpruy.my.id")
+TEMPMAIL_API_BASE: str = TM.get("api_base", f"{TEMPMAIL_BASE_URL.rstrip('/')}/api")
 TEMPMAIL_TIMEOUT: float = float(TM.get("timeout", 120))
 TEMPMAIL_POLL_INTERVAL: float = float(TM.get("poll_interval", 3))
-TEMPMAIL_LIMIT: int = int(TM.get("limit", 50))
 
 
 # ── capsolver ──────────────────────────────────────────────────────────────

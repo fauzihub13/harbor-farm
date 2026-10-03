@@ -2,9 +2,9 @@
 # Copy this file to config.toml and fill in your values.
 # WARNING: config.toml contains credentials — it is gitignored. Do NOT commit.
 
-# Domains that may receive mail on your local temp-mail server.
-# Comma-separated (multi value). Must be domains your server accepts.
-# Example: "mpruy.my.id,example.com,another.tld"
+# Domains to generate addresses on (must be accepted by BlipMail).
+# Comma-separated (multi value). Get them from GET /api/config -> mailDomains.
+# Example: "mpruy.my.id,jsc.my.id,lemin.my.id,sqw.my.id"
 ALLOWED_EMAIL = "your-domain.com"
 
 [tokenharbor]
@@ -16,10 +16,11 @@ user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Ge
 timezone = "Asia/Jakarta"
 
 [tempmail]
-base_url = "http://localhost:8000"
+# BlipMail — https://blipmail.mpruy.my.id/docs
+base_url = "https://blipmail.mpruy.my.id"
+api_base = "https://blipmail.mpruy.my.id/api"
 timeout = 120
 poll_interval = 3
-limit = 50
 
 [capsolver]
 enabled = true

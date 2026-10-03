@@ -14,7 +14,7 @@
 ## ✨ Features
 
 - 🔐 **Auto signup** — Next.js Server Action + Capsolver Turnstile bypass
-- 📧 **Local temp mail** — Polls your self-hosted temp-mail API for the 6-digit verification code
+- 📧 **BlipMail temp mail** — Claims a disposable inbox via the BlipMail API and polls it for the 6-digit verification code
 - 🔑 **API key generation** — Auto create + extract plaintext key
 - 🆓 **Free model activation** — One-click enable all free models
 - 🚀 **Batch mode** — Create N accounts in parallel across threads
@@ -66,7 +66,7 @@ python3 -m tools.tokenharbor.cli test-key thk_live_xxxxxxxx
 secret files, no proxy `.txt` files. The file is gitignored — never commit it.
 
 ```toml
-# Domains allowed to receive mail on your local temp-mail server.
+# Domains to generate addresses on (must be accepted by BlipMail).
 # Comma-separated (multi value).
 ALLOWED_EMAIL = "mpruy.my.id,example.com"
 
@@ -75,10 +75,11 @@ base_url = "https://tokenharbor.ai"
 turnstile_sitekey = "0x4AAAAAADBuC8Knz1EJZx9-"
 
 [tempmail]
-base_url = "http://localhost:8000"   # your local temp-mail API
+# BlipMail — https://blipmail.mpruy.my.id/docs
+base_url = "https://blipmail.mpruy.my.id"
+api_base = "https://blipmail.mpruy.my.id/api"
 timeout = 120
 poll_interval = 3
-limit = 50
 
 [capsolver]
 enabled = true
@@ -125,7 +126,8 @@ free = [
 
 ### 1. ALLOWED_EMAIL
 
-A comma-separated list of domains that your local temp-mail server accepts.
+A comma-separated list of domains to generate addresses on. These must be
+domains your BlipMail instance accepts (see `GET /api/config` → `mailDomains`).
 The CLI generates random local parts and rotates across these domains.
 Both `"a.com, b.com"` and a TOML array `["a.com", "b.com"]` are supported.
 
@@ -162,19 +164,22 @@ Each worker gets its own fresh sticky-session IP. Results are written to
 `account.json` (full records) and `accounts.txt` (`email|apikey` lines)
 under a lock, so concurrent writes are safe.
 
-### 5. Temp Mail (local API)
+### 5. Temp Mail (BlipMail)
 
-The CLI talks to your local temp-mail server (see `temp-api/docs.md`):
+The CLI uses [BlipMail](https://blipmail.mpruy.my.id/docs). It is an
+anonymous-session API (no key): fetch a `sessionId` from `GET /api/session`,
+send it as `x-session-id`, claim an inbox, then read its messages.
 
 ```
-GET /health                     -> {"status": "ok", ...}
-GET /inbox/{email}?limit=50     -> {"email", "count", "emails": [...]}
-GET /inbox/{email}/{uid}        -> single email detail
+GET  /api/config                        -> {"mailDomains": [...]}
+GET  /api/session                       -> {"sessionId"}
+POST /api/inboxes                       -> {address, created_at}
+GET  /api/inboxes/{address}/messages    -> [{id, from_address, subject, body, received_at}]
 ```
 
-Each email has `uid`, `from`, `to`, `date`, `body`, `seen`. No inbox creation
-is needed — just poll the inbox. Verification is read from the email body:
-a `verify-email?token=` link is preferred, with a 6-digit code fallback.
+Each account flow claims the generated address under its own session, then
+polls for the TokenHarbor email. Verification is read from the body: a
+`verify-email?token=` link is preferred, with a 6-digit code fallback.
 
 ## 📁 File Structure
 
@@ -187,7 +192,7 @@ tools/tokenharbor/
 ├── client.py            # Core HTTP client (signup, login, API key, free models)
 ├── cli.py               # Interactive CLI + Rich TUI
 ├── capsolver.py         # Capsolver Turnstile solver
-└── tempmail.py          # Local temp-mail client + email parsing
+└── tempmail.py          # BlipMail client + email parsing
 ```
 
 ## 🔄 How It Works
@@ -195,7 +200,7 @@ tools/tokenharbor/
 ```
 ┌──────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐    ┌───────────┐
 │  SIGNUP  │───▶│  EMAIL   │───▶│  VERIFY   │───▶│  LOGIN   │───▶│ API KEY   │
-│ Next.js  │    │ local    │    │ link/code │    │ Cookie   │    │ POST      │
+│ Next.js  │    │ BlipMail │    │ link/code │    │ Cookie   │    │ POST      │
 │ Action   │    │ inbox    │    │           │    │ auth     │    │ /api/keys │
 └──────────┘    └──────────┘    └───────────┘    └──────────┘    └───────────┘
                                                                       │
@@ -208,7 +213,7 @@ tools/tokenharbor/
 ```
 
 1. **Signup** — Multipart form data to the Next.js Server Action, Turnstile token from Capsolver
-2. **Email** — Poll the local temp-mail inbox for the verification message
+2. **Email** — Claim the BlipMail inbox and poll for the verification message
 3. **Verify** — Extract the link (or 6-digit code) and hit `/verify-email?token=...`
 4. **Login** — Server Action signin, extract Supabase chunked cookies → access token
 5. **API Key** — `POST /api/keys` with cookie auth, take `plaintext` key

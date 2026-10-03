@@ -60,6 +60,7 @@ def _log(*args, **kwargs) -> None:
 from tools.tokenharbor.client import TokenHarborClient
 from tools.tokenharbor.tempmail import (
     TempMailClient,
+    TempMailError,
     extract_verification_link,
     extract_verification_code,
 )
@@ -283,11 +284,20 @@ def _print_banner(clear: bool = True):
 
 def _wait_for_verification(email: str, timeout: Optional[float] = None) -> Optional[str]:
     """
-    Poll the local temp-mail inbox until a TokenHarbor verification link or
-    code arrives. Returns the link (preferred) or the 6-digit code, or None.
+    Claim the BlipMail inbox for ``email`` (so it belongs to this session),
+    then poll until a TokenHarbor verification link or code arrives.
+
+    Returns the link (preferred), the 6-digit code, or None on timeout.
     """
     timeout = config.TEMPMAIL_TIMEOUT if timeout is None else timeout
     mail = TempMailClient()
+
+    local_part, _, domain = email.partition("@")
+    try:
+        mail.create_inbox(local_part=local_part, domain=domain)
+    except TempMailError as e:
+        _log(f"  [yellow]⚠ BlipMail inbox claim failed for {email}: {e}[/yellow]")
+
     msg = mail.wait_for_message(
         email,
         timeout=timeout,
