@@ -27,3 +27,5 @@ tools/tokenharbor/config.toml
 .venv
 .capsolver_key
 .proxy_list.txt
+
+*.json
