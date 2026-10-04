@@ -142,6 +142,23 @@ def _load_capsolver_key() -> Optional[str]:
     return config.CAPSOLVER_API_KEY
 
 
+def _solver_name() -> str:
+    """Label for the active Turnstile solver."""
+    if config.CAPSOLVER_ENABLED and config.CAPSOLVER_API_KEY:
+        return "Capsolver"
+    return "Camoufox"
+
+
+def _solver_ready() -> bool:
+    """True when a Turnstile solver is usable (Capsolver key, or Camoufox)."""
+    if config.CAPSOLVER_ENABLED and config.CAPSOLVER_API_KEY:
+        return True
+    if not config.CAMOUFOX_ENABLED:
+        return False
+    from tools.tokenharbor import camoufox_solver
+    return camoufox_solver.is_available()
+
+
 def _load_all_proxies() -> list[str]:
     """Load all proxies from config.toml (DataImpulse gateway + optional list)."""
     return config.load_proxies()
@@ -494,8 +511,8 @@ def _run_full_setup(email: Optional[str] = None, password: Optional[str] = None)
     console.print(Panel(info, title="[bold]Account Info[/bold]", border_style="cyan"))
 
     capsolver_key = _load_capsolver_key()
-    if not capsolver_key:
-        console.print("[red]✗ Capsolver API key not configured in config.toml[/red]")
+    if not _solver_ready():
+        console.print("[red]✗ No Turnstile solver available (enable Capsolver or Camoufox)[/red]")
         return 1
 
     # check & pick working proxy
@@ -575,8 +592,8 @@ def _run_batch(count: int) -> int:
     _print_banner()
 
     capsolver_key = _load_capsolver_key()
-    if not capsolver_key:
-        console.print("[red]✗ Capsolver API key not configured in config.toml[/red]")
+    if not _solver_ready():
+        console.print("[red]✗ No Turnstile solver available (enable Capsolver or Camoufox)[/red]")
         return 1
 
     domains = _get_domains()
@@ -693,8 +710,8 @@ def _run_batch(count: int) -> int:
 def _run_create_key(email: str, password: str, label: str = "auto-cli") -> int:
     _print_banner()
     capsolver_key = _load_capsolver_key()
-    if not capsolver_key:
-        console.print("[red]✗ Capsolver API key not configured[/red]")
+    if not _solver_ready():
+        console.print("[red]✗ No Turnstile solver available[/red]")
         return 1
 
     proxy = _load_random_proxy()
@@ -869,7 +886,10 @@ def _interactive_menu() -> int:
         status_grid.add_column(justify="center")
         status_grid.add_column(justify="center")
         status_grid.add_column(justify="center")
-        caps_status = "[green]✓ Capsolver ready[/green]" if capsolver_key else "[red]✗ Capsolver missing[/red]"
+        if _solver_ready():
+            caps_status = f"[green]✓ {_solver_name()} ready[/green]"
+        else:
+            caps_status = "[red]✗ No solver (Capsolver off, Camoufox missing)[/red]"
         proxy_status = "[green]✓ Proxy ready[/green]" if proxy else "[yellow]⚠ Proxy none[/yellow]"
         domain_status = f"[dim]📧 {', '.join(domains)}[/dim]" if domains else "[red]✗ No domains[/red]"
         status_grid.add_row(caps_status, proxy_status, domain_status)

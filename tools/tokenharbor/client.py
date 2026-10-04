@@ -122,15 +122,20 @@ class TokenHarborClient:
     # Turnstile
     # ------------------------------------------------------------------
 
-    def _solve_turnstile(self, page_url: str, timeout: float = 90) -> Optional[str]:
-        """Solve Turnstile via the shared Capsolver module. Returns token or None."""
-        if not self._capsolver_key:
-            return None
+    def _solve_turnstile(self, page_url: str, timeout: Optional[float] = None) -> Optional[str]:
+        """
+        Solve Turnstile via the configured solver (Capsolver or Camoufox).
+
+        The dispatcher chooses based on ``[capsolver] enabled``; when Capsolver
+        is off/no key, it uses the keyless Camoufox solver. When ``timeout`` is
+        None, each solver uses its own configured timeout. Returns token or None.
+        """
         return solve_turnstile(
             page_url=page_url,
             sitekey=TURNSTILE_SITEKEY,
             api_key=self._capsolver_key,
             timeout=timeout,
+            proxy=self._proxy,
         )
 
     # ------------------------------------------------------------------

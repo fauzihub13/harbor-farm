@@ -25,10 +25,25 @@ timeout = 120
 poll_interval = 3
 
 [capsolver]
+# enabled = true  -> solve Turnstile with Capsolver (needs api_key, fast)
+# enabled = false -> solve Turnstile with Camoufox (keyless browser solver)
 enabled = true
 api_key = "CAP-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 timeout = 90
 poll_interval = 3
+
+[camoufox]
+# Keyless Turnstile solver, used automatically when capsolver.enabled = false.
+# Requires: pip install camoufox && camoufox fetch
+enabled = true
+headless = true
+humanize = true
+timeout = 120
+# Launch browser through the same proxy (slower; off by default).
+use_proxy = false
+geoip = false
+# Max Camoufox browsers solving simultaneously (each is a full browser).
+max_concurrency = 3
 
 [proxy]
 enabled = true

@@ -1,6 +1,12 @@
 """
-Capsolver Turnstile integration for TokenHarbor.
+Turnstile solver dispatcher for TokenHarbor.
 
+Solver selection (from config.toml):
+
+  [capsolver] enabled = true   -> Capsolver (API key, fast)
+  [capsolver] enabled = false  -> Camoufox  (keyless browser solver)
+
+The public ``solve_turnstile`` name is unchanged, so callers never change.
 All values (API key, sitekey, page URLs, timeouts) come from config.toml.
 """
 
@@ -31,13 +37,45 @@ def solve_turnstile(
     session: Optional[requests.Session] = None,
 ) -> Optional[str]:
     """
-    Solve a Turnstile captcha via Capsolver.
+    Solve a Turnstile challenge with the configured solver.
 
-    Returns the token string, or None when disabled / on timeout / failure.
+    Uses Capsolver when ``[capsolver] enabled = true`` (and a key exists),
+    otherwise falls back to the keyless Camoufox solver.
+
+    Returns the token string, or None on timeout / failure.
     """
-    if not config.CAPSOLVER_ENABLED:
-        return None
+    if config.CAPSOLVER_ENABLED and _resolve_api_key(api_key):
+        return _solve_capsolver(
+            page_url=page_url,
+            sitekey=sitekey,
+            api_key=api_key,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            proxy=proxy,
+            session=session,
+        )
 
+    # Capsolver disabled (or enabled without a key) -> keyless Camoufox.
+    from tools.tokenharbor import camoufox_solver
+
+    return camoufox_solver.solve_turnstile(
+        page_url=page_url,
+        sitekey=sitekey,
+        timeout=timeout,
+        proxy=proxy,
+    )
+
+
+def _solve_capsolver(
+    page_url: Optional[str] = None,
+    sitekey: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: Optional[float] = None,
+    poll_interval: Optional[float] = None,
+    proxy: Optional[str] = None,
+    session: Optional[requests.Session] = None,
+) -> Optional[str]:
+    """Solve a Turnstile captcha via Capsolver."""
     client_key = _resolve_api_key(api_key)
     if not client_key:
         print("  Capsolver: no API key configured")

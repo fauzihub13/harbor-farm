@@ -13,7 +13,7 @@
 
 ## ✨ Features
 
-- 🔐 **Auto signup** — Next.js Server Action + Capsolver Turnstile bypass
+- 🔐 **Auto signup** — Next.js Server Action + Turnstile solved by Capsolver **or** keyless Camoufox
 - 📧 **BlipMail temp mail** — Claims a disposable inbox via the BlipMail API and polls it for the 6-digit verification code
 - 🔑 **API key generation** — Auto create + extract plaintext key
 - 🆓 **Free model activation** — One-click enable all free models
@@ -22,12 +22,14 @@
 - 🌐 **Dynamic proxy rotation** — Each thread pins its own sticky session (distinct IP), verified via IP check
 - 🛡️ **Proxy auto-check** — Verify proxies before use, filter alive only
 - 🎨 **Rich TUI** — Interactive terminal UI with panels, tables, progress bars
-- ⚙️ **Single config file** — Everything (email domains, proxy, Capsolver, threads) in `config.toml`
+- ⚙️ **Single config file** — Everything (email domains, proxy, solver, threads) in `config.toml`
 
 ## 📦 Requirements
 
 ```bash
 pip install rich requests
+# optional, for the keyless Camoufox Turnstile solver:
+pip install camoufox && camoufox fetch
 ```
 
 ## 🚀 Quick Start
@@ -83,10 +85,23 @@ timeout = 120
 poll_interval = 3
 
 [capsolver]
+# enabled = true  -> Capsolver (needs api_key, fast)
+# enabled = false -> Camoufox  (keyless browser solver)
 enabled = true
 api_key = "CAP-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 timeout = 90
 poll_interval = 3
+
+[camoufox]
+# Keyless Turnstile solver, auto-used when capsolver.enabled = false.
+# Requires: pip install camoufox && camoufox fetch
+enabled = true
+headless = true
+humanize = true
+timeout = 120
+use_proxy = false
+geoip = false
+max_concurrency = 3
 
 [proxy]
 enabled = true
@@ -134,11 +149,25 @@ comma-separated subset to restrict generation to those domains; leave it
 empty for all. If BlipMail is unreachable at start, `ALLOWED_EMAIL` is used
 as fallback. Both `"a.com, b.com"` and a TOML array are supported.
 
-### 2. Capsolver
+### 2. Turnstile solver (Capsolver or Camoufox)
 
-Put your Capsolver API key directly in `[capsolver].api_key`.
-Get one at [capsolver.com](https://capsolver.com) — a few dollars covers
-hundreds of solves. Set `enabled = false` to skip the Turnstile step.
+The solver is selected automatically:
+
+- `[capsolver] enabled = true` **and** an `api_key` set → **Capsolver**
+  (API key, ~3-5s per solve). Get a key at [capsolver.com](https://capsolver.com).
+- `[capsolver] enabled = false` (or no key) → **Camoufox**, a keyless
+  anti-detect Firefox that renders the widget and reads the token.
+
+Camoufox needs a one-time setup:
+
+```bash
+pip install camoufox
+camoufox fetch
+```
+
+Options in `[camoufox]`: `enabled`, `headless`, `humanize`, `timeout`,
+`use_proxy` (route the browser through the same proxy), `geoip`, and
+`max_concurrency` (how many browsers solve at once in batch mode).
 
 ### 3. Proxy (DataImpulse)
 
@@ -216,7 +245,8 @@ tools/tokenharbor/
 ├── config.py            # Central config loader
 ├── client.py            # Core HTTP client (signup, login, API key, free models)
 ├── cli.py               # Interactive CLI + Rich TUI
-├── capsolver.py         # Capsolver Turnstile solver
+├── capsolver.py         # Turnstile solver dispatcher (Capsolver / Camoufox)
+├── camoufox_solver.py   # Keyless Camoufox Turnstile solver
 └── tempmail.py          # BlipMail client + email parsing
 ```
 
@@ -237,7 +267,7 @@ tools/tokenharbor/
                                                                └──────────────┘
 ```
 
-1. **Signup** — Multipart form data to the Next.js Server Action, Turnstile token from Capsolver
+1. **Signup** — Multipart form data to the Next.js Server Action, Turnstile token from Capsolver or Camoufox
 2. **Email** — Claim the BlipMail inbox and poll for the verification message
 3. **Verify** — Extract the link (or 6-digit code) and hit `/verify-email?token=...`
 4. **Login** — Server Action signin, extract Supabase chunked cookies → access token
@@ -292,7 +322,7 @@ python3 -m tools.tokenharbor.cli check-proxies
 - Emails use random local parts over BlipMail's domains (auto-fetched, optional `ALLOWED_EMAIL` filter)
 - Proxies are scanned before creating — dead proxies are skipped
 - TokenHarbor rate limits are bypassed by rotating the DataImpulse proxy
-- Capsolver solves a Turnstile in ~3-5 seconds
+- Capsolver solves a Turnstile in ~3-5s; Camoufox (keyless) in ~10-20s
 - Batch mode runs `max_workers` accounts in parallel, each on its own sticky IP
 
 ---

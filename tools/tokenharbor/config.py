@@ -84,6 +84,18 @@ CAPSOLVER_TIMEOUT: float = float(CS.get("timeout", 90))
 CAPSOLVER_POLL_INTERVAL: float = float(CS.get("poll_interval", 3))
 
 
+# ── camoufox (keyless Turnstile solver) ─────────────────────────────────────
+# Used automatically when capsolver is disabled (or has no API key).
+CF = _RAW.get("camoufox", {})
+CAMOUFOX_ENABLED: bool = bool(CF.get("enabled", True))
+CAMOUFOX_HEADLESS: bool = bool(CF.get("headless", True))
+CAMOUFOX_HUMANIZE: bool = bool(CF.get("humanize", True))
+CAMOUFOX_TIMEOUT: float = float(CF.get("timeout", 120))
+CAMOUFOX_GEOIP: bool = bool(CF.get("geoip", False))
+CAMOUFOX_USE_PROXY: bool = bool(CF.get("use_proxy", False))
+CAMOUFOX_MAX_CONCURRENCY: int = int(CF.get("max_concurrency", 3))
+
+
 # ── proxy ──────────────────────────────────────────────────────────────────
 PX = _RAW.get("proxy", {})
 PROXY_ENABLED: bool = bool(PX.get("enabled", True))
