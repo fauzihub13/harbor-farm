@@ -60,6 +60,55 @@ def _log(*args, **kwargs) -> None:
         console.print(*args, **kwargs)
 
 
+# Ordered pipeline steps: (key, human label)
+_STEP_DEFS: list[tuple[str, str]] = [
+    ("signup", "Sign up"),
+    ("email", "Verification email"),
+    ("verify", "Verify email"),
+    ("login", "Log in"),
+    ("key", "Create API key"),
+    ("free", "Enable free models"),
+]
+_STEP_LABEL = dict(_STEP_DEFS)
+_STEP_NO = {key: i + 1 for i, (key, _) in enumerate(_STEP_DEFS)}
+_STEP_TOTAL = len(_STEP_DEFS)
+
+
+def _step_reporter(tag: str = "", numbered: bool = True):
+    """
+    Build a thread-safe step reporter.
+
+    ``tag`` prefixes each line (e.g. ``#2``) so parallel batch workers stay
+    readable. ``numbered`` shows the ``n/6`` position in the full pipeline.
+    Returns ``report(key, status, detail="")`` where status is
+    ``start`` | ``ok`` | ``fail`` | ``warn``.
+    """
+    prefix = f"[dim]{tag}[/dim] " if tag else ""
+    started: dict[str, float] = {}
+
+    def report(key: str, status: str, detail: str = "") -> None:
+        label = _STEP_LABEL.get(key, key)
+        pos = f"[dim]{_STEP_NO.get(key, 0)}/{_STEP_TOTAL}[/dim] " if numbered else ""
+        suffix = f" [dim]· {detail}[/dim]" if detail else ""
+        if status == "start":
+            started[key] = time.time()
+            extra = f" [dim]({detail})[/dim]" if detail else ""
+            _log(f"  {prefix}{pos}[cyan]» {label}[/cyan]{extra}")
+        elif status == "ok":
+            dur = time.time() - started.get(key, time.time())
+            _log(f"  {prefix}{pos}[green]✓ {label}[/green] [dim]{dur:4.1f}s[/dim]{suffix}")
+        elif status == "warn":
+            dur = time.time() - started.get(key, time.time())
+            _log(f"  {prefix}{pos}[yellow]⚠ {label}[/yellow] [dim]{dur:4.1f}s[/dim]{suffix}")
+        else:  # fail
+            dur = time.time() - started.get(key, time.time())
+            _log(f"  {prefix}{pos}[red]✗ {label}[/red] [dim]{dur:4.1f}s[/dim]")
+            if detail:
+                _log(f"       [red]{detail}[/red]")
+
+    return report
+
+
 _RATE_LIMIT_MARKERS = (
     "a bit fast",
     "too many",
@@ -95,7 +144,7 @@ def _pace_signup() -> None:
         _LAST_SIGNUP_AT[0] = time.time()
 
 
-def _signup_with_retry(email, password, capsolver_key, proxy, on_step):
+def _signup_with_retry(email, password, capsolver_key, proxy, report=None):
     """
     Submit signup with global pacing and retry-on-rate-limit.
 
@@ -106,6 +155,8 @@ def _signup_with_retry(email, password, capsolver_key, proxy, on_step):
     backoff = config.RATE_RETRY_BACKOFF
     last_error = "Signup failed"
     for attempt in range(1, attempts + 1):
+        if report and attempt > 1:
+            report("signup", "start", detail=f"retry {attempt}/{attempts}")
         _pace_signup()
         client = TokenHarborClient(capsolver_key=capsolver_key, proxy=proxy)
         result = client.signup(email, password)
@@ -116,10 +167,8 @@ def _signup_with_retry(email, password, capsolver_key, proxy, on_step):
             return client, result
         if attempt < attempts:
             wait = backoff * (config.RATE_BACKOFF_MULTIPLIER ** (attempt - 1))
-            _log(
-                f"  [yellow]⏳ Rate limited ({email}), retrying in {wait:.0f}s "
-                f"(attempt {attempt + 1}/{attempts})[/yellow]"
-            )
+            if report:
+                report("signup", "warn", detail=f"rate limited — retry in {wait:.0f}s")
             time.sleep(wait)
             proxy = _get_fresh_proxy()[0] or proxy
     return TokenHarborClient(capsolver_key=capsolver_key, proxy=proxy), {"ok": False, "error": last_error}
@@ -430,55 +479,66 @@ def _run_single_setup(
     password: str,
     capsolver_key: str,
     proxy: Optional[str] = None,
-    on_step=None,
+    report=None,
 ) -> dict:
     """
-    Run full setup for ONE account.
+    Run full setup for ONE account, printing each step as it happens.
 
     Returns the account dict on success, or ``{"error": <message>}`` on failure.
-    ``on_step`` is an optional callback ``(step_name)`` for progress reporting;
-    it must itself be thread-safe (the batch runner wraps it).
+    ``report`` is an optional ``_step_reporter`` callable; when omitted a
+    standalone reporter is created. It must be thread-safe (the batch runner
+    passes a tagged reporter).
     """
-    def step(name: str) -> None:
-        if on_step:
-            on_step(name)
+    if report is None:
+        report = _step_reporter()
 
     proxy = proxy or _load_random_proxy()
 
     # ── step 1: signup (paced globally + retried on rate limit) ─────────
-    step("signup")
-    client, result = _signup_with_retry(email, password, capsolver_key, proxy, on_step)
+    report("signup", "start", detail=f"via {_solver_name()}")
+    client, result = _signup_with_retry(email, password, capsolver_key, proxy, report)
     if not result.get("ok"):
+        report("signup", "fail", detail=str(result.get("error")))
         return {"error": f"Signup failed: {result.get('error')}"}
+    report("signup", "ok")
 
     # ── step 2: wait for verification email ─────────────────────────────
-    step("email")
+    report("email", "start")
     verification = _wait_for_verification(email)
     if not verification:
+        report("email", "fail", detail=f"No verification email for {email}")
         return {"error": f"No verification email for {email}"}
+    report("email", "ok")
 
     # ── step 3: verify email ────────────────────────────────────────────
-    step("verify")
-    if not client.verify_email(verification):
-        _log(f"  [yellow]⚠ Email verification not confirmed for {email}[/yellow]")
+    report("verify", "start")
+    if client.verify_email(verification):
+        report("verify", "ok")
+    else:
+        report("verify", "warn", detail="not confirmed — continuing")
 
     # ── step 4: login ───────────────────────────────────────────────────
-    step("login")
+    report("login", "start")
     login_result = client.login(email, password)
     if not login_result.get("ok"):
+        report("login", "fail", detail=str(login_result.get("error")))
         return {"error": f"Login failed for {email}: {login_result.get('error')}"}
+    report("login", "ok")
 
     # ── step 5: create API key ──────────────────────────────────────────
-    step("key")
+    report("key", "start")
     key_result = client.create_api_key("auto-cli")
     api_key = key_result.get("plaintext") or key_result.get("key", {}).get("plaintext")
     if not api_key:
+        report("key", "fail", detail="no plaintext key returned")
         return {"error": f"API key failed for {email}"}
+    report("key", "ok", detail=api_key[:18] + "…")
 
     # ── step 6: enable free models ──────────────────────────────────────
-    step("free")
+    report("free", "start")
     free_result = client.enable_free_models()
     free_enabled = free_result.get("ok") or free_result.get("free_models_enabled")
+    report("free", "ok" if free_enabled else "warn", detail="" if free_enabled else "not confirmed")
 
     return {
         "email": email,
@@ -521,49 +581,35 @@ def _run_full_setup(email: Optional[str] = None, password: Optional[str] = None)
         console.print("[red]✗ No working proxy available[/red]")
         return 1
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("[cyan]Setup...", total=6)
+    console.print()
+    console.print(
+        Panel.fit(
+            f"[bold]{email}[/bold]\n[dim]solver: {_solver_name()} · flow: "
+            f"{_STEP_TOTAL} steps · {_STEP_LABEL['signup']} → {_STEP_LABEL['free']}[/dim]",
+            title="[bold cyan]Running setup[/bold cyan]",
+            border_style="cyan",
+        )
+    )
+    console.print()
 
-        steps = ["signup", "email", "verify", "login", "key", "free"]
-        labels = {
-            "signup": "Signing up",
-            "email": "Waiting email",
-            "verify": "Verifying",
-            "login": "Logging in",
-            "key": "Creating API key",
-            "free": "Enabling free models",
-        }
-
-        def on_step(name: str) -> None:
-            if name in steps:
-                progress.update(
-                    task,
-                    completed=steps.index(name),
-                    description=f"[cyan]{labels[name]}...[/cyan]",
-                )
-
-        account = _run_single_setup(email, password, capsolver_key, proxy=proxy, on_step=on_step)
-        if account.get("error"):
-            progress.stop()
-            console.print(f"[red]✗ {account['error']}[/red]")
-            return 1
-        progress.update(task, completed=6)
+    account = _run_single_setup(email, password, capsolver_key, proxy=proxy)
+    if account.get("error"):
+        console.print()
+        console.print(Panel(f"[red]✗ {account['error']}[/red]", title="[red]Setup failed[/red]", border_style="red"))
+        return 1
 
     # ── test ────────────────────────────────────────────────────────────
     api_key = account["api_key"]
     free_enabled = account["free_tier_enabled"]
     console.print()
-    console.print("[bold cyan]Testing API key...[/bold cyan]")
-    client = TokenHarborClient(capsolver_key=capsolver_key, proxy=_load_random_proxy())
-    test = client.chat(api_key, _FREE_MODELS[0], "Say 'TokenHarbor CLI works!' in 5 words")
+    with Progress(SpinnerColumn(), TextColumn("[dim]Testing API key…[/dim]"), console=console) as progress:
+        task = progress.add_task("", total=None)
+        client = TokenHarborClient(capsolver_key=capsolver_key, proxy=_load_random_proxy())
+        test = client.chat(api_key, _FREE_MODELS[0], "Say 'TokenHarbor CLI works!' in 5 words")
+        progress.remove_task(task)
     if "choices" in test:
         content = test["choices"][0]["message"]["content"]
-        console.print(f"  [green]✓[/green] {content}")
+        console.print(f"  [green]✓[/green] [dim]API key works:[/dim] {content}")
     else:
         console.print(f"  [yellow]⚠[/yellow] {test.get('error', test)}")
 
@@ -643,19 +689,26 @@ def _run_batch(count: int) -> int:
             proxy = random.choice(alive)
             ip = _proxy_exit_ip(proxy)
 
-        with _console_lock:
-            console.print(
-                f"[bold]── [{index}/{count}][/bold] {email} "
-                f"[dim]({domain}, ip={ip or '?'})[/dim]"
-            )
+        _log("")
+        _log(
+            f"[bold cyan]┌── [{index}/{count}][/bold cyan] [bold]{email}[/bold] "
+            f"[dim]({domain} · ip={ip or '?'} · solver={_solver_name()})[/dim]"
+        )
+        report = _step_reporter(tag=f"#{index}")
 
-        result = _run_single_setup(email, password, capsolver_key, proxy=proxy)
+        try:
+            result = _run_single_setup(email, password, capsolver_key, proxy=proxy, report=report)
+        except Exception as exc:  # never let a worker die silently
+            result = {"error": f"Unexpected error: {type(exc).__name__}: {exc}"}
 
         if result.get("error"):
-            _log(f"  [red]✗ {result['error']}[/red]")
+            _log(f"[bold cyan]└──[/bold cyan] [red]✗ [{index}/{count}] {email} failed[/red]")
         else:
             _save_account(result)
-            _log(f"  [green]✓ {email}[/green] [dim]→ {result['api_key'][:24]}...[/dim]")
+            _log(
+                f"[bold cyan]└──[/bold cyan] [green]✓ [{index}/{count}] {email}[/green] "
+                f"[dim]→ {result['api_key'][:24]}…[/dim]"
+            )
 
         with results_lock:
             if result.get("error"):
@@ -716,19 +769,25 @@ def _run_create_key(email: str, password: str, label: str = "auto-cli") -> int:
 
     proxy = _load_random_proxy()
     console.print(f"  [dim]Proxy:[/dim] {proxy or '[yellow]none[/yellow]'}")
+    console.print(f"  [dim]Solver:[/dim] {_solver_name()}")
+    console.print()
     client = TokenHarborClient(capsolver_key=capsolver_key, proxy=proxy)
+    report = _step_reporter(numbered=False)
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
-        task = progress.add_task("[cyan]Logging in...", total=None)
-        login_result = client.login(email, password)
-        if not login_result.get("ok"):
-            progress.stop()
-            console.print(f"[red]✗ Login failed:[/red] {login_result.get('error')}")
-            return 1
+    report("login", "start")
+    login_result = client.login(email, password)
+    if not login_result.get("ok"):
+        report("login", "fail", detail=str(login_result.get("error")))
+        return 1
+    report("login", "ok")
 
-        progress.update(task, description="[cyan]Creating API key...")
-        key_result = client.create_api_key(label)
-        api_key = key_result.get("plaintext") or key_result.get("key", {}).get("plaintext")
+    report("key", "start")
+    key_result = client.create_api_key(label)
+    api_key = key_result.get("plaintext") or key_result.get("key", {}).get("plaintext")
+    if not api_key:
+        report("key", "fail", detail=json.dumps(key_result)[:160])
+        return 1
+    report("key", "ok", detail=api_key[:18] + "…")
 
     if api_key:
         _save_account({"email": email, "api_key": api_key, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
@@ -805,23 +864,25 @@ def _run_enable_free(email: str, password: str) -> int:
     capsolver_key = _load_capsolver_key()
     proxy = _load_random_proxy()
     console.print(f"  [dim]Proxy:[/dim] {proxy or '[yellow]none[/yellow]'}")
+    console.print(f"  [dim]Solver:[/dim] {_solver_name()}")
+    console.print()
     client = TokenHarborClient(capsolver_key=capsolver_key, proxy=proxy)
+    report = _step_reporter(numbered=False)
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
-        task = progress.add_task("[cyan]Logging in...", total=None)
-        login_result = client.login(email, password)
-        if not login_result.get("ok"):
-            progress.stop()
-            console.print(f"[red]✗ Login failed:[/red] {login_result.get('error')}")
-            return 1
+    report("login", "start")
+    login_result = client.login(email, password)
+    if not login_result.get("ok"):
+        report("login", "fail", detail=str(login_result.get("error")))
+        return 1
+    report("login", "ok")
 
-        progress.update(task, description="[cyan]Enabling free models...")
-        result = client.enable_free_models()
-
-    if result.get("ok"):
+    report("free", "start")
+    result = client.enable_free_models()
+    if result.get("ok") or result.get("free_models_enabled"):
+        report("free", "ok")
         console.print("[green]✓ Free models enabled![/green]")
         return 0
-    console.print(f"[red]✗ Failed:[/red] {json.dumps(result)[:200]}")
+    report("free", "fail", detail=json.dumps(result)[:160])
     return 1
 
 
