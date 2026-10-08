@@ -213,6 +213,11 @@ def _load_all_proxies() -> list[str]:
     return config.load_proxies()
 
 
+def _proxies_configured() -> bool:
+    """True when proxy is enabled AND at least one proxy URL is available."""
+    return config.PROXY_ENABLED and bool(_load_all_proxies())
+
+
 def _load_random_proxy() -> Optional[str]:
     proxies = _load_all_proxies()
     return random.choice(proxies) if proxies else None
@@ -575,11 +580,15 @@ def _run_full_setup(email: Optional[str] = None, password: Optional[str] = None)
         console.print("[red]✗ No Turnstile solver available (enable Capsolver or Camoufox)[/red]")
         return 1
 
-    # check & pick working proxy
-    proxy = _pick_working_proxy_interactive()
-    if proxy is None:
-        console.print("[red]✗ No working proxy available[/red]")
-        return 1
+    # check & pick working proxy (optional — run direct when proxy is off)
+    if _proxies_configured():
+        proxy = _pick_working_proxy_interactive()
+        if proxy is None:
+            console.print("[red]✗ No working proxy available[/red]")
+            return 1
+    else:
+        proxy = None
+        console.print("[yellow]⚠ Proxy disabled — connecting directly[/yellow]")
 
     console.print()
     console.print(
@@ -650,18 +659,22 @@ def _run_batch(count: int) -> int:
     console.print(f"  [dim]Accounts to create:[/dim] {count}")
 
     # pre-check configured proxies (rotating gateway reachability)
-    console.print("[bold cyan]Checking proxies...[/bold cyan]")
-    check_proxy = config.session_proxy_url(config.new_session_id())
-    if check_proxy:
-        alive = [check_proxy] if _check_proxy(check_proxy) else []
-        dead = [] if alive else [check_proxy]
+    if _proxies_configured():
+        console.print("[bold cyan]Checking proxies...[/bold cyan]")
+        check_proxy = config.session_proxy_url(config.new_session_id())
+        if check_proxy:
+            alive = [check_proxy] if _check_proxy(check_proxy) else []
+            dead = [] if alive else [check_proxy]
+        else:
+            all_proxies = _load_all_proxies()
+            alive, dead = _check_all_proxies(all_proxies)
+        if not alive:
+            console.print(f"[red]✗ All {len(dead)} proxies are dead![/red]")
+            return 1
+        console.print(f"  [green]✓ {len(alive)} alive[/green]  [red]✗ {len(dead)} dead[/red]")
     else:
-        all_proxies = _load_all_proxies()
-        alive, dead = _check_all_proxies(all_proxies)
-    if not alive:
-        console.print(f"[red]✗ All {len(dead)} proxies are dead![/red]")
-        return 1
-    console.print(f"  [green]✓ {len(alive)} alive[/green]  [red]✗ {len(dead)} dead[/red]")
+        alive = []
+        console.print("[yellow]⚠ Proxy disabled — connecting directly[/yellow]")
 
     workers = config.THREADS_MAX_WORKERS if config.THREADS_ENABLED else 1
     workers = max(1, min(workers, count))
@@ -685,7 +698,7 @@ def _run_batch(count: int) -> int:
 
         # each thread builds its own rotating proxy with a fresh sticky session
         proxy, ip = _get_fresh_proxy()
-        if proxy is None:
+        if proxy is None and alive:
             proxy = random.choice(alive)
             ip = _proxy_exit_ip(proxy)
 
