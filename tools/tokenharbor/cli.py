@@ -436,8 +436,7 @@ BANNER = r"""
                ██║  ██║██║  ██║██║  ██║██████╔╝╚██████╔╝██║  ██║
                ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝  ╚═════╝ ╚═╝  ╚═╝
 [/bold cyan]
-[bold bright_cyan]                 TokenHarbor Auto CLI — HTTP Mode • No Browser[/bold bright_cyan]
-[dim italic]                                 by MASANTOID[/dim italic]
+[bold bright_cyan]                 TokenHarbor Auto Farm CLI — HTTP Mode • No Browser[/bold bright_cyan]
 """
 
 
