@@ -150,18 +150,22 @@ class TokenHarborClient:
         boundary = "----WebKitFormBoundary" + uuid.uuid4().hex[:16]
         action_key = self._generate_action_key()
         sep = f"--{boundary}"
+        # Next.js form-encoded Server Action args are prefixed with "_1_" (the
+        # leading underscore is required — without it the server drops the
+        # bound fields and replies "Email and password are required.").
+        p = "_1_"
 
         parts: list[str] = []
-        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="1_$ACTION_REF_1"\r\n\r\n\r\n')
-        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="1_$ACTION_1:0"\r\n\r\n{{"id":"{action_hash}","bound":"$@1"}}\r\n')
-        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="1_$ACTION_1:1"\r\n\r\n["$undefined"]\r\n')
-        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="1_$ACTION_KEY"\r\n\r\n{action_key}\r\n')
-        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="1_device_fingerprint"\r\n\r\n{self._fingerprint}\r\n')
-        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="1_timezone"\r\n\r\n{self._timezone}\r\n')
-        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="1_next"\r\n\r\n\r\n')
+        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="{p}$ACTION_REF_1"\r\n\r\n\r\n')
+        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="{p}$ACTION_1:0"\r\n\r\n{{"id":"{action_hash}","bound":"$@1"}}\r\n')
+        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="{p}$ACTION_1:1"\r\n\r\n["$undefined"]\r\n')
+        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="{p}$ACTION_KEY"\r\n\r\n{action_key}\r\n')
+        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="{p}device_fingerprint"\r\n\r\n{self._fingerprint}\r\n')
+        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="{p}timezone"\r\n\r\n{self._timezone}\r\n')
+        parts.append(f'{sep}\r\nContent-Disposition: form-data; name="{p}next"\r\n\r\n\r\n')
 
         for name, value in fields:
-            parts.append(f'{sep}\r\nContent-Disposition: form-data; name="1_{name}"\r\n\r\n{value}\r\n')
+            parts.append(f'{sep}\r\nContent-Disposition: form-data; name="{p}{name}"\r\n\r\n{value}\r\n')
 
         parts.append(f'{sep}\r\nContent-Disposition: form-data; name="0"\r\n\r\n["$undefined","$K1"]\r\n')
         parts.append(f'{sep}--\r\n')
